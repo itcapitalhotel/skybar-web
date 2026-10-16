@@ -179,7 +179,10 @@ export default function TableBookingsPage() {
       setBookings(nextBookings);
       if (booking) {
         try {
-          await tablesApi.updateStatus(booking.tableId, { status: 'occupied', guests: booking.partySize });
+          await tablesApi.updateStatus(booking.tableId, {
+            status: 'occupied',
+            guestCount: booking.partySize,
+          });
           setFloorTables(prev => prev.map(t => t.id === booking.tableId ? { ...t, status: 'occupied', guests: booking.partySize } : t));
         } catch { /* ignore */ }
       }

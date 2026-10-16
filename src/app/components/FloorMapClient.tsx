@@ -9,6 +9,7 @@ import PaymentModal from '@/components/PaymentModal';
 import SplitBillModal from '@/components/SplitBillModal';
 import TransferTableModal from '@/components/TransferTableModal';
 import NewTableDrawer from './NewTableDrawer';
+import EditTablePanel from './EditTablePanel';
 import FloorCanvas from './FloorCanvas';
 import OrderPanel from './OrderPanel';
 import MenuOverlay from './MenuOverlay';
@@ -51,7 +52,7 @@ function apiTableToLocal(t: ApiTableData): TableData {
     label: t.label,
     zone: normalizeZone(t.zone),
     status: t.status as TableData['status'],
-    guests: t.guests,
+    guests: t.guestCount ?? t.guests ?? 0,
     capacity: t.capacity,
     staff: t.staff,
     seatedMinutes: t.seatedMinutes,
@@ -74,7 +75,10 @@ export default function FloorMapClient() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [tableOrders, setTableOrders] = useState<Record<string, OrderItem[]>>({});
   const [tableOrderTotals, setTableOrderTotals] = useState<Record<string, number>>({});
+  /** API order id per table (from GET/POST orders — not client UUID) */
+  const [tableOrderIds, setTableOrderIds] = useState<Record<string, string>>({});
   const [editMode, setEditMode] = useState(false);
+  const [editTableSaving, setEditTableSaving] = useState(false);
   const [newTableOpen, setNewTableOpen] = useState(false);
   const [managerPinOpen, setManagerPinOpen] = useState(false);
   const [managerPinAction, setManagerPinAction] = useState('');
@@ -135,11 +139,28 @@ export default function FloorMapClient() {
     }
   }, []);
 
+  const syncTableGuestCount = useCallback((tableId: string, guestCount: number) => {
+    if (!Number.isFinite(guestCount) || guestCount < 1) return;
+    setTables(prev =>
+      prev.map(t => (t.id === tableId ? { ...t, guests: guestCount } : t)),
+    );
+    setSelectedTable(prev =>
+      prev?.id === tableId ? { ...prev, guests: guestCount } : prev,
+    );
+  }, []);
+
   const fetchOrderForTable = useCallback(async (tableId: string) => {
     try {
       const order = await ordersApi.get(tableId);
       setTableOrders(prev => ({ ...prev, [tableId]: order.items }));
       setTableOrderTotals(prev => ({ ...prev, [tableId]: order.total }));
+      if (order.orderId) {
+        setTableOrderIds(prev => ({ ...prev, [tableId]: order.orderId! }));
+      }
+      const guestCount = order.guestCount;
+      if (guestCount != null && guestCount > 0) {
+        syncTableGuestCount(tableId, guestCount);
+      }
     } catch {
       setTableOrders(prev => ({ ...prev, [tableId]: [] }));
       setTableOrderTotals(prev => {
@@ -147,8 +168,13 @@ export default function FloorMapClient() {
         delete next[tableId];
         return next;
       });
+      setTableOrderIds(prev => {
+        const next = { ...prev };
+        delete next[tableId];
+        return next;
+      });
     }
-  }, []);
+  }, [syncTableGuestCount]);
 
   // ── WebSocket: subscribe to /topic/tables/status ───────────────────────────
   const connectTableStatusWS = useCallback(() => {
@@ -171,20 +197,31 @@ export default function FloorMapClient() {
           const bodyStart = raw.indexOf('\n\n');
           if (bodyStart === -1) return;
           const body = raw.slice(bodyStart + 2).replace(/\0$/, '');
-          const payload = JSON.parse(body) as { id: string; status: ApiTableData['status']; guests?: number; orderTotal?: number };
+          const payload = JSON.parse(body) as {
+            id: string;
+            status: ApiTableData['status'];
+            guests?: number;
+            guestCount?: number;
+            orderTotal?: number;
+          };
+          const party = payload.guestCount ?? payload.guests;
           setTables(prev => prev.map(t => {
             if (t.id !== payload.id) return t;
             return {
               ...t,
               status: payload.status as TableData['status'],
-              guests: payload.guests ?? t.guests,
+              guests: party ?? t.guests,
               orderTotal: payload.orderTotal ?? t.orderTotal,
             };
           }));
           // Keep selected table in sync
           setSelectedTable(prev => {
             if (!prev || prev.id !== payload.id) return prev;
-            return { ...prev, status: payload.status as TableData['status'], guests: payload.guests ?? prev.guests };
+            return {
+              ...prev,
+              status: payload.status as TableData['status'],
+              guests: party ?? prev.guests,
+            };
           });
         } catch {
           // ignore malformed frames
@@ -230,13 +267,21 @@ export default function FloorMapClient() {
   }, [selectedTable?.id, fetchOrderForTable]);
 
   // ── Update table status via API ────────────────────────────────────────────
-  const updateTableStatus = useCallback(async (tableId: string, status: ApiTableData['status'], guests?: number) => {
-    try {
-      await tablesApi.updateStatus(tableId, { status, guests });
-    } catch {
-      // optimistic update already applied
-    }
-  }, []);
+  const updateTableStatus = useCallback(
+    async (tableId: string, status: ApiTableData['status'], guestCount?: number) => {
+      try {
+        const staffId = getStaffIdForOrder();
+        await tablesApi.updateStatus(tableId, {
+          status,
+          ...(guestCount != null ? { guestCount } : {}),
+          ...(staffId ? { staff: staffId } : {}),
+        });
+      } catch {
+        // optimistic update already applied
+      }
+    },
+    [],
+  );
 
   const currentItems = selectedTable ? (tableOrders[selectedTable.id] || []) : [];
   const currentTotal = (() => {
@@ -260,6 +305,11 @@ export default function FloorMapClient() {
     try {
       await ordersApi.clear(tableId);
       await updateTableStatus(tableId, 'available', 0);
+      setTableOrderIds(prev => {
+        const next = { ...prev };
+        delete next[tableId];
+        return next;
+      });
     } catch {
       toast.error('Failed to clear table order');
       return;
@@ -295,12 +345,20 @@ export default function FloorMapClient() {
     setLockOpen(false);
   };
 
+  const resolveGuestCountForTable = (tableId: string): number => {
+    if (pendingGuestCount > 0) return pendingGuestCount;
+    const t = tables.find(tbl => tbl.id === tableId) ?? (selectedTable?.id === tableId ? selectedTable : null);
+    return Math.max(1, t?.guests ?? 1);
+  };
+
   const handleAddItemsToTable = async (tableId: string, newItems: OrderItem[]) => {
     const staffId = getStaffIdForOrder();
     if (!staffId) return;
+    const guestCount = resolveGuestCountForTable(tableId);
     try {
       const result = await ordersApi.addItems(tableId, {
         staff: staffId,
+        guestCount,
         items: newItems.map(i => ({
           menuItemId: i.menuItemId ?? i.id,
           name: i.name,
@@ -310,6 +368,12 @@ export default function FloorMapClient() {
           notes: i.notes,
         })),
       });
+      if (result.orderId) {
+        setTableOrderIds(prev => ({ ...prev, [tableId]: String(result.orderId) }));
+      }
+      if (result.guestCount != null && result.guestCount > 0) {
+        syncTableGuestCount(tableId, result.guestCount);
+      }
       const jobs = result.kitchenPrintJobs ?? result.categoryPrintJobs;
       const printJobs = jobs?.length ?? 0;
       if (printJobs > 0) {
@@ -326,8 +390,8 @@ export default function FloorMapClient() {
     }
     setTables(prev => prev.map(t => {
       if (t.id === tableId && t.status === 'available') {
-        updateTableStatus(tableId, 'occupied');
-        return { ...t, status: 'occupied', guests: pendingGuestCount || 1 };
+        void updateTableStatus(tableId, 'occupied', guestCount);
+        return { ...t, status: 'occupied', guests: guestCount };
       }
       return t;
     }));
@@ -353,10 +417,10 @@ export default function FloorMapClient() {
     if (!guestInfoTable) return;
     setPendingGuestCount(guestCount);
     setTableNote(note);
-    // Update guest count on the table optimistically
     setTables(prev => prev.map(t => t.id === guestInfoTable.id ? { ...t, guests: guestCount } : t));
     setMenuTable({ ...guestInfoTable, guests: guestCount });
     setGuestInfoTable(null);
+    void updateTableStatus(guestInfoTable.id, 'occupied', guestCount);
   };
 
   // Open menu for an already-occupied table to add more items
@@ -388,6 +452,54 @@ export default function FloorMapClient() {
     setSavedPositions(positions);
     toast.success('Floor layout saved');
   }, [tables]);
+
+  const handleRenameTable = useCallback(async (tableId: string, label: string) => {
+    setEditTableSaving(true);
+    try {
+      await tablesApi.update(tableId, { label });
+      setTables(prev => prev.map(t => (t.id === tableId ? { ...t, label } : t)));
+      setSelectedTable(prev => (prev?.id === tableId ? { ...prev, label } : prev));
+      toast.success('Table name updated');
+    } catch {
+      toast.error('Failed to update table name');
+    } finally {
+      setEditTableSaving(false);
+    }
+  }, []);
+
+  const handleDeleteTable = useCallback(async (tableId: string) => {
+    setEditTableSaving(true);
+    try {
+      await tablesApi.delete(tableId);
+      setTables(prev => prev.filter(t => t.id !== tableId));
+      setSavedPositions(prev => {
+        const next = { ...prev };
+        delete next[tableId];
+        return next;
+      });
+      setTableOrders(prev => {
+        const next = { ...prev };
+        delete next[tableId];
+        return next;
+      });
+      setTableOrderTotals(prev => {
+        const next = { ...prev };
+        delete next[tableId];
+        return next;
+      });
+      setTableOrderIds(prev => {
+        const next = { ...prev };
+        delete next[tableId];
+        return next;
+      });
+      setSelectedTable(prev => (prev?.id === tableId ? null : prev));
+      toast.success('Table deleted');
+    } catch {
+      toast.error('Could not delete table — it may still be in use');
+    } finally {
+      setEditTableSaving(false);
+    }
+  }, []);
 
   const handleChangeShape = useCallback(async (tableId: string, shape: TableShape) => {
     const previous = tables.find((t) => t.id === tableId);
@@ -449,12 +561,17 @@ export default function FloorMapClient() {
     } catch { /* optimistic */ }
     setTables(prev => prev.map(t => {
       if (t.id === selectedTable.id) {
-        updateTableStatus(selectedTable.id, 'available');
+        void updateTableStatus(selectedTable.id, 'available', 0);
         return { ...t, status: 'available', guests: 0, seatedMinutes: 0, orderTotal: 0 };
       }
       return t;
     }));
     setTableOrders(prev => ({ ...prev, [selectedTable.id]: [] }));
+    setTableOrderIds(prev => {
+      const next = { ...prev };
+      delete next[selectedTable.id];
+      return next;
+    });
     setSelectedTable(null);
   };
 
@@ -543,7 +660,12 @@ export default function FloorMapClient() {
                     <Layers size={13} /> <span className="hidden sm:inline">Zones</span>
                   </Link>
                   <button
-                    onClick={() => { setEditMode(v => !v); }}
+                    onClick={() => {
+                      setEditMode(v => {
+                        if (v) setSelectedTable(null);
+                        return !v;
+                      });
+                    }}
                     className={`flex items-center gap-1.5 px-2.5 md:px-3 py-2 rounded-xl border text-xs font-medium transition-all duration-150 ${
                       editMode
                         ? 'bg-amber-500/15 border-amber-500/40 text-amber-400' :'bg-muted/50 border-border text-muted-foreground hover:text-foreground'
@@ -583,7 +705,14 @@ export default function FloorMapClient() {
         </div>
 
         {/* Hint bar */}
-        {!editMode && (
+        {editMode ? (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/15">
+            <PenLine size={12} className="text-amber-400 shrink-0" />
+            <span className="text-xs text-amber-400/90">
+              Tap a table to <strong className="text-amber-300">rename or delete</strong> in the panel · Drag to move · Save layout when done
+            </span>
+          </div>
+        ) : (
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/5 border border-emerald-500/15">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
             <span className="text-xs text-emerald-400/80">
@@ -612,35 +741,48 @@ export default function FloorMapClient() {
           {/* Order Panel — full width on tablet, fixed sidebar on lg+ */}
           <div className="w-full lg:w-72 xl:w-80 flex-shrink-0 glass-card rounded-2xl border border-border overflow-hidden flex flex-col" style={{ minHeight: '320px', maxHeight: '600px' }}>
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Order Panel</span>
-              <div className="flex items-center gap-2">
-                {selectedTable && (
-                  <span className="text-xs text-muted-foreground">{currentItems.length} items</span>
-                )}
-                {selectedTable && (selectedTable.status === 'occupied' || selectedTable.status === 'bill') && (
-                  <button
-                    onClick={handleAddMoreItems}
-                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25 transition-all text-[10px] font-semibold"
-                    title="Add more items to this order"
-                  >
-                    <Plus size={10} />
-                    Add Items
-                  </button>
-                )}
-              </div>
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                {editMode ? 'Edit Table' : 'Order Panel'}
+              </span>
+              {!editMode && (
+                <div className="flex items-center gap-2">
+                  {selectedTable && (
+                    <span className="text-xs text-muted-foreground">{currentItems.length} items</span>
+                  )}
+                  {selectedTable && (selectedTable.status === 'occupied' || selectedTable.status === 'bill') && (
+                    <button
+                      onClick={handleAddMoreItems}
+                      className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25 transition-all text-[10px] font-semibold"
+                      title="Add more items to this order"
+                    >
+                      <Plus size={10} />
+                      Add Items
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex-1 overflow-hidden flex flex-col">
-              <OrderPanel
-                table={selectedTable}
-                items={currentItems}
-                role={role}
-                onVoidItem={handleVoidItem}
-                onOpenSplit={() => setSplitOpen(true)}
-                onOpenTransfer={() => setTransferOpen(true)}
-                onOpenPayment={() => setPaymentOpen(true)}
-                onRequestManagerPin={handleRequestManagerPin}
-                onClearTable={handleClearTable}
-              />
+              {editMode ? (
+                <EditTablePanel
+                  table={selectedTable}
+                  saving={editTableSaving}
+                  onRename={handleRenameTable}
+                  onDelete={handleDeleteTable}
+                />
+              ) : (
+                <OrderPanel
+                  table={selectedTable}
+                  items={currentItems}
+                  role={role}
+                  onVoidItem={handleVoidItem}
+                  onOpenSplit={() => setSplitOpen(true)}
+                  onOpenTransfer={() => setTransferOpen(true)}
+                  onOpenPayment={() => setPaymentOpen(true)}
+                  onRequestManagerPin={handleRequestManagerPin}
+                  onClearTable={handleClearTable}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -691,6 +833,7 @@ export default function FloorMapClient() {
             onPaymentComplete={handlePaymentComplete}
             total={currentTotal}
             tableId={selectedTable.id}
+            guestCount={Math.max(1, selectedTable.guests ?? 1)}
           />
           <SplitBillModal
             isOpen={splitOpen}
@@ -701,6 +844,7 @@ export default function FloorMapClient() {
             total={currentTotal}
             tableId={selectedTable.id}
             tableLabel={selectedTable.label}
+            guestCount={Math.max(1, selectedTable.guests ?? 1)}
             onSplitComplete={() => void handleSplitComplete()}
           />
           <TransferTableModal

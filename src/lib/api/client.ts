@@ -5,7 +5,7 @@ import type {
   LoginRequest, LoginResponse, ManagerPinVerifyRequest, ManagerPinVerifyResponse,
   StaffUser, CreateUserRequest, UpdateUserRequest,
   ZoneData, ZonePrinter, CreateZonePrinterRequest, UpdateZonePrinterRequest,
-  KitchenPrinter, CategoryPrintersResponse, CategoryKitchenPrinter,
+  KitchenPrinter, CategoryPrinterMapping, CategoryPrintersResponse, CategoryKitchenPrinter,
   CreateZoneRequest, UpdateZoneRequest,
   TableData, CreateTableRequest, TableLayoutUpdate, MergeTablesRequest, MergeTablesResponse,
   TransferTableRequest, TransferTableResponse,
@@ -160,8 +160,10 @@ export const tablesApi = {
   create: (data: CreateTableRequest) => post<TableData>('/tables', data),
   update: (id: string, data: Partial<CreateTableRequest>) => put<TableData>(`/tables/${id}`, data),
   delete: (id: string) => del<{ message: string }>(`/tables/${id}`),
-  updateStatus: (id: string, data: { status: TableData['status']; guests?: number; staff?: string }) =>
-    patch<TableData>(`/tables/${id}/status`, data),
+  updateStatus: (
+    id: string,
+    data: { status: TableData['status']; guestCount?: number; staff?: string },
+  ) => patch<TableData>(`/tables/${id}/status`, data),
   updatePosition: (id: string, x: number, y: number) =>
     patch<TableData>(`/tables/${id}/position`, { x, y }),
   updateLayout: (updates: TableLayoutUpdate[]) =>
@@ -173,7 +175,19 @@ export const tablesApi = {
 // ─── Orders ───────────────────────────────────────────────────────────────────
 export const ordersApi = {
   list: (params?: { tableId?: string; status?: string }) => get<TableOrder[]>('/orders', params),
-  get: (tableId: string) => get<TableOrder>(`/orders/${tableId}`),
+  get: async (tableId: string): Promise<TableOrder> => {
+    const raw = await get<Record<string, unknown>>(`/orders/${tableId}`);
+    return {
+      tableId: String(raw.tableId ?? tableId),
+      orderId: raw.orderId != null ? String(raw.orderId) : raw.order_id != null ? String(raw.order_id) : undefined,
+      guestCount: Number(raw.guestCount ?? raw.guest_count) || undefined,
+      items: (raw.items as TableOrder['items']) ?? [],
+      subtotal: Number(raw.subtotal ?? 0),
+      serviceCharge: Number(raw.serviceCharge ?? raw.service_charge ?? 0),
+      vat: Number(raw.vat ?? 0),
+      total: Number(raw.total ?? 0),
+    };
+  },
   addItems: (tableId: string, data: AddOrderItemsRequest) =>
     post<AddOrderItemsResponse>(`/orders/${tableId}/items`, data),
   voidItem: (tableId: string, itemId: string, data: VoidOrderItemRequest) =>
@@ -262,10 +276,24 @@ export const menuCategoryApi = {
   update: (id: string, data: Partial<CreateMenuCategoryRequest>) =>
     put<MenuCategory>(`/menu/categories/${id}`, data),
   delete: (id: string) => del<void>(`/menu/categories/${id}`),
+  getPrinterMappings: () =>
+    get<CategoryPrinterMapping[]>('/menu/category-printers/mappings'),
+  /** Preferred GET for one admin tab — scoped to categoryId only */
+  getCategoryPrinters: (categoryId: string) =>
+    get<CategoryPrintersResponse>(`/menu/category-printers/${categoryId}`),
+  /** Alternate path — same wrapped `{ categoryId, printers }` shape */
   getPrinters: (categoryId: string) =>
     get<CategoryPrintersResponse>(`/menu/categories/${categoryId}/printers`),
   setPrinters: (categoryId: string, printers: CategoryKitchenPrinter[]) =>
     put<CategoryPrintersResponse>(`/menu/categories/${categoryId}/printers`, { printers }),
+  /** Admin tab load: preferred path, falls back to /menu/categories/{id}/printers */
+  loadCategoryPrintersView: async (categoryId: string): Promise<CategoryPrintersResponse> => {
+    try {
+      return await get<CategoryPrintersResponse>(`/menu/category-printers/${categoryId}`);
+    } catch {
+      return get<CategoryPrintersResponse>(`/menu/categories/${categoryId}/printers`);
+    }
+  },
 };
 
 export const menuApi = {

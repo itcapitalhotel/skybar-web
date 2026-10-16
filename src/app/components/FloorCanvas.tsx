@@ -347,6 +347,7 @@ function ZonePage({
   const canvasRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
   const [shapePickerFor, setShapePickerFor] = useState<string>('');
+  const dragMovedRef = useRef(false);
 
   const canvasW = Math.max(zone.canvasWidth, ...tables.map(t => {
     const pos = positions[t.id] ?? { x: t.x, y: t.y };
@@ -361,12 +362,16 @@ function ZonePage({
     if (!editMode) return;
     e.preventDefault();
     e.stopPropagation();
+    dragMovedRef.current = false;
+    const table = tables.find(t => t.id === tableId);
+    if (table) onSelectTable(table);
     const pos = positions[tableId] ?? { x: 0, y: 0 };
     setDragging({ id: tableId, startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y });
-  }, [editMode, positions]);
+  }, [editMode, positions, tables, onSelectTable]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!dragging) return;
+    dragMovedRef.current = true;
     const dx = e.clientX - dragging.startX;
     const dy = e.clientY - dragging.startY;
     const newX = Math.max(10, dragging.origX + dx);
@@ -377,8 +382,15 @@ function ZonePage({
   const handleMouseUp = useCallback(() => setDragging(null), []);
 
   const handleTableClick = (e: React.MouseEvent, table: TableData) => {
-    if (editMode) return;
     e.stopPropagation();
+    if (editMode) {
+      if (dragMovedRef.current) {
+        dragMovedRef.current = false;
+        return;
+      }
+      onSelectTable(table);
+      return;
+    }
     onSelectTable(table);
     if (table.status === 'available') onOpenMenu(table);
   };
@@ -491,7 +503,7 @@ function ZonePage({
                 pointerEvents: 'none',
               }}>
                 <Move size={10} style={{ color: '#f59e0b' }} />
-                <span style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600 }}>Drag to reposition · Click "Shape" to change table shape</span>
+                <span style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600 }}>Tap to edit name · Drag to move · Shape button to change type</span>
               </div>
             )}
 

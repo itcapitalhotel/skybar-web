@@ -78,12 +78,20 @@ export interface ZonePrinter {
   isDefault: boolean;
 }
 
-/** Kitchen station (category tickets — no zone on category save). */
+/** Kitchen station catalog (picker) — not the per-category editor list. */
 export interface KitchenPrinter {
   id: string;
   name: string;
   printerIp: string;
   printerPort: number;
+  /** Categories already linked to this station */
+  categoryIds?: string[];
+}
+
+export interface CategoryPrinterMapping {
+  categoryId: string;
+  categoryLabel?: string;
+  printers: CategoryKitchenPrinter[];
 }
 
 /** Row in GET/PUT /menu/categories/{categoryId}/printers */
@@ -96,6 +104,7 @@ export interface CategoryKitchenPrinter {
 
 export interface CategoryPrintersResponse {
   categoryId?: string;
+  categoryLabel?: string;
   printers: CategoryKitchenPrinter[];
 }
 
@@ -138,7 +147,10 @@ export interface TableData {
   label: string;
   zone: string;
   status: TableStatus;
+  /** Display / legacy list field */
   guests: number;
+  /** Preferred API field on PATCH status responses */
+  guestCount?: number;
   capacity: number;
   staff: string;
   seatedMinutes: number;
@@ -311,6 +323,9 @@ export interface OrderItem {
 
 export interface TableOrder {
   tableId: string;
+  /** Server order id (e.g. "15") — store from GET/POST, not client-generated */
+  orderId?: string;
+  guestCount?: number;
   items: OrderItem[];
   subtotal: number;
   serviceCharge: number;
@@ -329,6 +344,8 @@ export interface AddOrderItemsRequest {
   }>;
   /** Staff user id (e.g. u2) — NOT display name */
   staff: string;
+  /** Party size — required when opening/seating; send on kitchen send */
+  guestCount?: number;
 }
 
 export interface CategoryPrintJobLine {
@@ -353,8 +370,10 @@ export interface KitchenPrintJob {
 export type CategoryPrintJob = KitchenPrintJob;
 
 export interface AddOrderItemsResponse {
+  orderId?: string;
   addedItems: OrderItem[];
   kdsTicketId: string;
+  guestCount?: number;
   kitchenPrintJobs?: KitchenPrintJob[];
   /** @deprecated backend may omit; use kitchenPrintJobs */
   categoryPrintJobs?: KitchenPrintJob[];
@@ -442,6 +461,7 @@ export type PaymentMethod = 'cash' | 'card' | 'qr' | 'room';
 
 export interface ProcessPaymentRequest {
   tableId: string;
+  guestCount?: number;
   method: PaymentMethod;
   subtotal: number;
   serviceCharge: number;
@@ -503,6 +523,7 @@ export interface SplitPaymentLine {
 
 export interface SplitPaymentRequest {
   tableId: string;
+  guestCount?: number;
   staffId?: string;
   cashierId?: string;
   splits: SplitPaymentLine[];
@@ -825,6 +846,8 @@ export interface AnalyticsTransactionDetail {
   serviceCharge?: number;
   vat?: number;
   discount?: number;
+  /** Party size — prefer guestCount from API */
+  guestCount?: number;
   covers?: number;
   openedAt?: string;
   closedAt?: string;
@@ -832,6 +855,10 @@ export interface AnalyticsTransactionDetail {
   staffId?: string;
   staffName?: string;
   staffRole?: string;
+  /** Server / staff who opened the table check */
+  openedByStaffId?: string;
+  openedByStaffName?: string;
+  openedByStaffRole?: string;
   cashierId?: string;
   cashierName?: string;
   roomNumber?: string | null;

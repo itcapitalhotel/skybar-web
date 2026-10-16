@@ -690,13 +690,23 @@ Tests the **saved** printer row (IP/port on `zone_printers`) — same TCP semant
 
 Receipt printers stay on **`/zones/{zoneId}/printers`**. Category tickets use **`kitchen_stations`** + **`menu_category_kitchen_stations`**. **No zone** in category printer URLs or admin UI.
 
-**Front-end spec:** [`docs/FRONTEND_CATEGORY_PRINTERS.md`](docs/FRONTEND_CATEGORY_PRINTERS.md)
+**Front-end spec:** [`docs/FRONTEND_CATEGORY_PRINTERS.md`](docs/FRONTEND_CATEGORY_PRINTERS.md) · Admin UI: [`docs/FRONTEND_ADMIN_CATEGORY_PRINTERS.md`](docs/FRONTEND_ADMIN_CATEGORY_PRINTERS.md)
+
+#### `GET /api/menu/category-printers/mappings` — **Auth:** Admin
+
+All categories with their printer lists (Admin Config initial load). Array of `{ categoryId, categoryLabel?, printers[] }`.
+
+#### `GET /api/menu/category-printers/{categoryId}` — **Auth:** Admin
+
+**Preferred** Admin tab load. Same wrapped body as below — **`printers`** only for that category.
 
 #### `GET /api/kitchen-printers` — **Auth:** Admin
 
-All kitchen stations (optional picker when editing a category). Fields: `id`, `name`, `printerIp`, `printerPort` — no zone.
+Station **catalog** for “copy existing” picker only (`categoryIds[]` per row). **Do not** bind this response to every category tab.
 
 #### `GET /api/menu/categories/{categoryId}/printers` — **Auth:** Admin
+
+Alternate path; same `{ categoryId, categoryLabel?, printers[] }` shape as `GET /api/menu/category-printers/{categoryId}`.
 
 **Response:**
 

@@ -431,8 +431,9 @@ const API_SECTIONS: Section[] = [
       {
         method: 'GET',
         path: '/api/kitchen-printers',
-        description: 'All kitchen stations (picker). id, name, printerIp, printerPort — no zone.',
-        response: `[ { "id": "ks-001", "name": "Bar Kitchen", "printerIp": "192.168.1.50", "printerPort": 9100 } ]`,
+        description:
+          'Kitchen station catalog for “Copy existing” picker only — includes categoryIds[]. Not the per-category tab list.',
+        response: `[ { "id": "ks-001", "name": "Bar Kitchen", "printerIp": "192.168.1.50", "printerPort": 9100, "categoryIds": ["cocktails"] } ]`,
         auth: 'Bearer Token (Admin)',
       },
     ],
@@ -623,8 +624,24 @@ const API_SECTIONS: Section[] = [
       },
       {
         method: 'GET',
+        path: '/api/menu/category-printers/mappings',
+        description:
+          'All category → kitchen printer mappings for Admin Config (one list per category). Do not use GET /kitchen-printers as the tab editor list.',
+        response: `[ { "categoryId": "cocktails", "categoryLabel": "Cocktails", "printers": [ { "id": "ks-001", "name": "Bar", "printerIp": "192.168.1.50", "printerPort": 9100 } ] } ]`,
+        auth: 'Bearer Token (Admin)',
+      },
+      {
+        method: 'GET',
+        path: '/api/menu/category-printers/{categoryId}',
+        description:
+          'Preferred Admin tab load — printers linked to this category only (wrapped object, use response.printers).',
+        response: `{ "categoryId": "cocktails", "categoryLabel": "Cocktails", "printers": [ { "id": "ks-001", "name": "Bar", "printerIp": "192.168.1.50", "printerPort": 9100 } ] }`,
+        auth: 'Bearer Token (Admin)',
+      },
+      {
+        method: 'GET',
         path: '/api/menu/categories/{categoryId}/printers',
-        description: 'Printer IDs linked to a menu category (Admin Config routing).',
+        description: 'Alternate path — same wrapped shape as GET /menu/category-printers/{categoryId}.',
         response: `{ "categoryId": "cocktails", "printers": [ { "id": "ks-001", "name": "Bar", "printerIp": "192.168.1.50", "printerPort": 9100 } ] }`,
         auth: 'Bearer Token (Admin)',
       },

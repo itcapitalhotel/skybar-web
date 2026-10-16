@@ -15,6 +15,7 @@ interface PaymentModalProps {
   serviceCharge?: number;
   vat?: number;
   tableId: string;
+  guestCount?: number;
   onPaymentComplete?: () => void;
 }
 
@@ -28,6 +29,7 @@ export default function PaymentModal({
   serviceCharge,
   vat,
   tableId,
+  guestCount = 1,
   onPaymentComplete,
 }: PaymentModalProps) {
   const [method, setMethod] = useState<PayMethod>('card');
@@ -50,6 +52,7 @@ export default function PaymentModal({
 
       const result = await paymentsApi.process({
         tableId,
+        guestCount: Math.max(1, guestCount),
         method,
         subtotal: resolvedSubtotal,
         serviceCharge: resolvedService,

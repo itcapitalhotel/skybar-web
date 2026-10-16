@@ -11,14 +11,60 @@ import type {
 
 function str(v: unknown): string | undefined {
   if (v == null) return undefined;
+  if (typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    for (const key of ['name', 'staffName', 'displayName', 'id', 'staffId', 'userId'] as const) {
+      const inner = o[key];
+      if (inner != null && typeof inner !== 'object') {
+        const s = String(inner).trim();
+        if (s && s !== '[object Object]') return s;
+      }
+    }
+    return undefined;
+  }
   const s = String(v).trim();
-  return s || undefined;
+  if (!s || s === '[object Object]') return undefined;
+  return s;
+}
+
+function refId(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  if (typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    return str(o.id ?? o.staffId ?? o.userId);
+  }
+  return str(v);
+}
+
+function refName(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  if (typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    return str(o.name ?? o.staffName ?? o.displayName);
+  }
+  return str(v);
+}
+
+function refRole(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  if (typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    return str(o.role ?? o.staffRole);
+  }
+  return str(v);
 }
 
 function num(v: unknown): number | undefined {
   if (v == null || v === '') return undefined;
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
+}
+
+function coalesceStr(...vals: (string | undefined)[]): string | undefined {
+  for (const v of vals) {
+    if (v != null && String(v).trim() !== '') return String(v).trim();
+  }
+  return undefined;
 }
 
 function bool(v: unknown): boolean | undefined {
@@ -136,9 +182,9 @@ function mapPayments(raw: unknown): OrderDetailsPayment[] | undefined {
       time,
       paidAt,
       closedAt,
-      staffId: str(p.staffId ?? p.staff_id),
-      staffName: str(p.staffName ?? p.staff_name),
-      staffRole: str(p.staffRole ?? p.staff_role),
+      staffId: coalesceStr(refId(p.staffId), refId(p.staff), str(p.staff_id)),
+      staffName: coalesceStr(refName(p.staffName), refName(p.staff), str(p.staff_name)),
+      staffRole: coalesceStr(refRole(p.staffRole), refRole(p.staff), str(p.staff_role)),
     };
   });
 }
@@ -150,9 +196,10 @@ export function normalizeOrderDetailResponse(raw: Record<string, unknown>): Anal
   const total = num(raw.total ?? raw.amount) ?? primary?.amount ?? 0;
   const paymentId = str(raw.paymentId ?? raw.payment_id ?? raw.id) ?? '';
 
-  return {
+  const orderId = str(raw.orderId ?? raw.order_id);
+  const detail: AnalyticsTransactionDetail = {
     paymentId,
-    orderId: str(raw.orderId ?? raw.order_id),
+    orderId,
     tableSessionId: str(raw.tableSessionId ?? raw.table_session_id),
     shiftId: str(raw.shiftId ?? raw.shift_id),
     tableId: str(raw.tableId ?? raw.table_id) ?? '',
@@ -167,7 +214,8 @@ export function normalizeOrderDetailResponse(raw: Record<string, unknown>): Anal
     serviceCharge: num(raw.serviceCharge ?? raw.service_charge),
     vat: num(raw.vat),
     discount: num(raw.discount),
-    covers: num(raw.covers),
+    guestCount: num(raw.guestCount ?? raw.guest_count),
+    covers: num(raw.covers ?? raw.guestCount ?? raw.guest_count),
     openedAt: str(raw.openedAt ?? raw.opened_at),
     closedAt: str(
       raw.closedAt
@@ -177,11 +225,52 @@ export function normalizeOrderDetailResponse(raw: Record<string, unknown>): Anal
         ?? raw.timestamp,
     ),
     durationMinutes: num(raw.durationMinutes ?? raw.duration_minutes),
-    staffId: str(raw.staffId ?? raw.staff_id ?? primary?.staffId),
-    staffName: str(raw.staffName ?? raw.staff_name ?? primary?.staffName),
-    staffRole: str(raw.staffRole ?? raw.staff_role ?? primary?.staffRole),
-    cashierId: str(raw.cashierId ?? raw.cashier_id),
-    cashierName: str(raw.cashierName ?? raw.cashier_name),
+    staffId: coalesceStr(
+      refId(raw.staffId),
+      refId(raw.staff),
+      str(raw.staff_id),
+      primary?.staffId,
+    ),
+    staffName: coalesceStr(
+      refName(raw.staffName),
+      refName(raw.staff),
+      refName(raw.staffId),
+      str(raw.staff_name),
+      primary?.staffName,
+    ),
+    staffRole: coalesceStr(
+      refRole(raw.staffRole),
+      refRole(raw.staff),
+      refRole(raw.staffId),
+      str(raw.staff_role),
+      primary?.staffRole,
+    ),
+    openedByStaffId: coalesceStr(
+      refId(raw.openedByStaffId),
+      refId(raw.openedBy),
+      refId(raw.opened_by),
+      str(raw.opened_by_staff_id),
+    ),
+    openedByStaffName: coalesceStr(
+      refName(raw.openedByStaffName),
+      refName(raw.openedBy),
+      refName(raw.opened_by),
+      str(raw.opened_by_staff_name),
+      str(raw.openedByName),
+      str(raw.opened_by_name),
+    ),
+    openedByStaffRole: coalesceStr(
+      refRole(raw.openedByStaffRole),
+      refRole(raw.openedBy),
+      str(raw.opened_by_staff_role),
+    ),
+    cashierId: coalesceStr(refId(raw.cashierId), refId(raw.cashier), str(raw.cashier_id), primary?.staffId),
+    cashierName: coalesceStr(
+      refName(raw.cashierName),
+      refName(raw.cashier),
+      str(raw.cashier_name),
+      primary?.staffName,
+    ),
     roomNumber: str(raw.roomNumber ?? raw.room_number) ?? null,
     cashTendered: num(raw.cashTendered ?? raw.cash_tendered) ?? null,
     changeAmount: num(raw.changeAmount ?? raw.change_amount ?? raw.change),
@@ -208,6 +297,14 @@ export function normalizeOrderDetailResponse(raw: Record<string, unknown>): Anal
     payments,
     receiptUrl: str(raw.receiptUrl ?? raw.receipt_url),
   };
+
+  if (orderId && !detail.openedByStaffId && !detail.openedByStaffName) {
+    detail.openedByStaffId = detail.staffId;
+    detail.openedByStaffName = detail.staffName;
+    detail.openedByStaffRole = detail.staffRole;
+  }
+
+  return detail;
 }
 
 /** Combine two detail payloads (analytics + orders/details) without dropping merge/split history. */
@@ -221,6 +318,14 @@ export function mergeOrderDetailLayers(
   const transfers = (overlay.transfers?.length ? overlay.transfers : base.transfers) ?? [];
   const items = overlay.items?.length ? overlay.items : (base.items ?? []);
   const payments = overlay.payments?.length ? overlay.payments : base.payments;
+
+  const orderOpenerId = coalesceStr(overlay.openedByStaffId, overlay.staffId);
+  const orderOpenerName = coalesceStr(overlay.openedByStaffName, overlay.staffName);
+  const orderOpenerRole = coalesceStr(overlay.openedByStaffRole, overlay.staffRole);
+
+  const payStaffId = coalesceStr(base.cashierId, base.staffId, primaryPaymentStaffId(base, paymentId));
+  const payStaffName = coalesceStr(base.cashierName, base.staffName, primaryPaymentStaffName(base, paymentId));
+  const payStaffRole = coalesceStr(base.staffRole, primaryPaymentStaffRole(base, paymentId));
 
   return {
     ...base,
@@ -238,5 +343,28 @@ export function mergeOrderDetailLayers(
       (overlay.hasSplit ?? base.hasSplit ?? splits.length > 0)
       || !!(overlay.split?.length || base.split?.length),
     hasTransfer: overlay.hasTransfer ?? base.hasTransfer ?? transfers.length > 0,
+    openedByStaffId: orderOpenerId ?? base.openedByStaffId,
+    openedByStaffName: orderOpenerName ?? base.openedByStaffName,
+    openedByStaffRole: orderOpenerRole ?? base.openedByStaffRole,
+    cashierId: payStaffId,
+    cashierName: payStaffName,
+    staffId: payStaffId ?? orderOpenerId,
+    staffName: payStaffName ?? orderOpenerName,
+    staffRole: payStaffRole ?? orderOpenerRole,
   };
+}
+
+function primaryPaymentStaffId(detail: AnalyticsTransactionDetail, paymentId: string): string | undefined {
+  const p = detail.payments?.find(x => x.paymentId === paymentId) ?? detail.payments?.[0];
+  return p?.staffId;
+}
+
+function primaryPaymentStaffName(detail: AnalyticsTransactionDetail, paymentId: string): string | undefined {
+  const p = detail.payments?.find(x => x.paymentId === paymentId) ?? detail.payments?.[0];
+  return p?.staffName;
+}
+
+function primaryPaymentStaffRole(detail: AnalyticsTransactionDetail, paymentId: string): string | undefined {
+  const p = detail.payments?.find(x => x.paymentId === paymentId) ?? detail.payments?.[0];
+  return p?.staffRole;
 }

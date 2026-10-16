@@ -13,7 +13,7 @@
 
 1. **List categories:** `GET /api/menu/categories`
 2. **Per category `{categoryId}`:**
-   - **Load:** `GET /api/menu/categories/{categoryId}/printers`
+   - **Load (admin):** `GET /api/menu/category-printers/{categoryId}` (or alternate `GET /api/menu/categories/{categoryId}/printers`)
    - **Save:** `PUT /api/menu/categories/{categoryId}/printers`
 
 ```json
@@ -28,7 +28,9 @@
 - Include `"id"` on existing rows; omit `id` for new printers.
 - One **Save** sends the full `printers` array for that category.
 
-3. **Optional picker:** `GET /api/kitchen-printers` — all stations (`id`, `name`, `printerIp`, `printerPort`), no zone.
+3. **Optional picker:** `GET /api/kitchen-printers` — catalog only (`categoryIds[]` on each row). **Do not** use as the per-tab editor list. Admin flow: [`docs/FRONTEND_ADMIN_CATEGORY_PRINTERS.md`](docs/FRONTEND_ADMIN_CATEGORY_PRINTERS.md).
+
+3b. **Load all tabs:** `GET /api/menu/category-printers/mappings` → `{ categoryId, categoryLabel, printers[] }[]`.
 
 4. **UI per row:** Name, IP, Port, and **Test ×5** (TCP via `POST /api/config/printer/test`, same as Receipt Printer). Run test before Save; Save is blocked if the last test for that row was 0/5 OK.
 
@@ -49,7 +51,8 @@ After `POST /api/orders/{tableId}/items`:
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/menu/categories` | Category list |
-| GET | `/api/menu/categories/{categoryId}/printers` | Printers for category |
+| GET | `/api/menu/category-printers/{categoryId}` | Printers for one category (admin tab) |
+| GET | `/api/menu/categories/{categoryId}/printers` | Same shape (alternate) |
 | PUT | `/api/menu/categories/{categoryId}/printers` | Save `{ printers: [...] }` |
 | GET | `/api/kitchen-printers` | All stations (picker) |
 

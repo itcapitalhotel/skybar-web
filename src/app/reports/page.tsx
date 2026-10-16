@@ -4,10 +4,12 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import TopNav from '@/components/TopNav';
 import LockModal from '@/components/LockModal';
 import {
-  Printer, FileSpreadsheet, DollarSign, CreditCard, QrCode, BedDouble, Receipt, Users,
-  TrendingUp, BarChart3, ArrowUpDown, RefreshCw, AlertCircle, Eye,
+  Printer, FileSpreadsheet, Receipt, Users,
+  BarChart3, ArrowUpDown, RefreshCw, AlertCircle,
 } from 'lucide-react';
 import OrderDetailModal from '@/app/reports/OrderDetailModal';
+import SkyBarShopReport from '@/app/reports/SkyBarShopReport';
+import { buildShopReportCsv } from '@/app/reports/reportDocumentHelpers';
 import DateRangePicker, { todayRange } from '@/components/DateRangePicker';
 import { analyticsApi } from '@/lib/api/client';
 import {
@@ -18,7 +20,7 @@ import {
   registerStaffNames,
   resolveStaffDisplay,
 } from '@/lib/staffDisplay';
-import type { AnalyticsStaffPerformance, AnalyticsTransaction } from '@/lib/api/types';
+import type { AnalyticsStaffPerformance, AnalyticsTransaction, AnalyticsTransactionDetail } from '@/lib/api/types';
 
 interface StaffReportRow {
   name: string;
@@ -43,8 +45,6 @@ interface OrderReportRow {
 }
 
 type SortKey = 'name' | 'revenue' | 'orders' | 'covers';
-type OrderSortKey = 'closedAt' | 'openedAt' | 'tableLabel' | 'staff' | 'method' | 'amount';
-
 function fmtDateTime(iso?: string): string {
   if (!iso) return '—';
   if (!iso.includes('T') && !iso.includes('-')) return iso;
@@ -106,38 +106,6 @@ function normalizeOrderRow(tx: AnalyticsTransaction): OrderReportRow {
   };
 }
 
-function paymentTotalsFromOrders(orders: OrderReportRow[]) {
-  const totals = { cash: 0, card: 0, qr: 0, room: 0 };
-  for (const o of orders) {
-    const m = o.method.toLowerCase();
-    if (m.includes('cash')) totals.cash += o.amount;
-    else if (m.includes('card')) totals.card += o.amount;
-    else if (m.includes('qr')) totals.qr += o.amount;
-    else if (m.includes('room')) totals.room += o.amount;
-  }
-  return totals;
-}
-
-function toCSV(rows: StaffReportRow[], orders: OrderReportRow[], from: string, to: string): string {
-  const staffHeaders = ['Staff', 'Role', 'Revenue', 'Orders', 'Covers', 'Avg Order', 'Period From', 'Period To'];
-  const staffLines = rows.map((r) =>
-    [r.name, r.role, r.revenue, r.orders, r.covers, r.avgOrderValue.toFixed(2), from, to].join(','),
-  );
-  const orderHeaders = ['Opened', 'Closed at', 'Table', 'Staff', 'Method', 'Amount'];
-  const orderLines = orders.map((o) =>
-    [o.openedAt, o.closedAt, o.tableLabel, o.staff, o.method, o.amount.toFixed(2)].join(','),
-  );
-  return [
-    'Staff Performance',
-    staffHeaders.join(','),
-    ...staffLines,
-    '',
-    'Orders',
-    orderHeaders.join(','),
-    ...orderLines,
-  ].join('\n');
-}
-
 export default function ReportsPage() {
   const [lockOpen, setLockOpen] = useState(false);
   const [locked, setLocked] = useState(false);
@@ -151,15 +119,11 @@ export default function ReportsPage() {
   const [sortKey, setSortKey] = useState<SortKey>('revenue');
   const [sortAsc, setSortAsc] = useState(false);
 
-  const [totalRevenue, setTotalRevenue] = useState(0);
-  const [totalOrders, setTotalOrders] = useState(0);
-  const [totalCovers, setTotalCovers] = useState(0);
-  const [avgOrderValue, setAvgOrderValue] = useState(0);
   const [staffRows, setStaffRows] = useState<StaffReportRow[]>([]);
   const [orderRows, setOrderRows] = useState<OrderReportRow[]>([]);
-  const [paymentTotals, setPaymentTotals] = useState({ cash: 0, card: 0, qr: 0, room: 0 });
-  const [orderSortKey, setOrderSortKey] = useState<OrderSortKey>('closedAt');
-  const [orderSortAsc, setOrderSortAsc] = useState(false);
+  const [orderDetails, setOrderDetails] = useState<AnalyticsTransactionDetail[]>([]);
+  const [reportGeneratedAt, setReportGeneratedAt] = useState(() => new Date());
+  const [loadingDetails, setLoadingDetails] = useState(false);
   const [detailRow, setDetailRow] = useState<OrderReportRow | null>(null);
 
   const loadReport = useCallback(async () => {
@@ -197,22 +161,41 @@ export default function ReportsPage() {
         ),
       );
       const orders = transactions.map(normalizeOrderRow);
-      setTotalRevenue(analytics.totalRevenue ?? 0);
-      setTotalOrders(analytics.totalOrders ?? orders.length);
-      setTotalCovers(analytics.totalCovers ?? 0);
-      setAvgOrderValue(analytics.avgOrderValue ?? 0);
       setStaffRows(perf.map(staffRow));
       setOrderRows(orders);
-      setPaymentTotals(paymentTotalsFromOrders(orders));
+      setReportGeneratedAt(new Date());
+
+      setLoadingDetails(true);
+      const details = await Promise.all(
+        orders.map(async (o) => {
+          try {
+            return await analyticsApi.getTransaction(o.paymentId);
+          } catch {
+            return {
+              paymentId: o.paymentId,
+              orderId: o.orderId,
+              tableId: '',
+              tableLabel: o.tableLabel,
+              method: o.method,
+              amount: o.amount,
+              total: o.amount,
+              openedAt: o.openedAt,
+              closedAt: o.closedAtIso,
+              time: o.closedAtIso,
+              staffName: o.staff,
+              items: [],
+            } satisfies AnalyticsTransactionDetail;
+          }
+        }),
+      );
+      setOrderDetails(details);
+      setLoadingDetails(false);
     } catch {
       setFetchError(true);
-      setTotalRevenue(0);
-      setTotalOrders(0);
-      setTotalCovers(0);
-      setAvgOrderValue(0);
       setStaffRows([]);
       setOrderRows([]);
-      setPaymentTotals({ cash: 0, card: 0, qr: 0, room: 0 });
+      setOrderDetails([]);
+      setLoadingDetails(false);
     } finally {
       setLoading(false);
     }
@@ -243,43 +226,23 @@ export default function ReportsPage() {
       });
   }, [staffRows, cashierFilter, sortKey, sortAsc]);
 
-  const filteredOrders = useMemo(() => {
-    return orderRows
-      .filter((r) => cashierFilter === 'All' || r.staff === cashierFilter)
-      .sort((a, b) => {
-        if (orderSortKey === 'amount') {
-          return orderSortAsc ? a.amount - b.amount : b.amount - a.amount;
-        }
-        if (orderSortKey === 'closedAt') {
-          return orderSortAsc
-            ? a.closedAtIso.localeCompare(b.closedAtIso)
-            : b.closedAtIso.localeCompare(a.closedAtIso);
-        }
-        if (orderSortKey === 'openedAt') {
-          return orderSortAsc ? a.openedAt.localeCompare(b.openedAt) : b.openedAt.localeCompare(a.openedAt);
-        }
-        const av = a[orderSortKey];
-        const bv = b[orderSortKey];
-        return orderSortAsc ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
-      });
-  }, [orderRows, cashierFilter, orderSortKey, orderSortAsc]);
-
-  const grossTotal = paymentTotals.cash + paymentTotals.card + paymentTotals.qr + paymentTotals.room;
-  const netTotal = totalRevenue || grossTotal;
+  const filteredOrderDetails = useMemo(() => {
+    const staffByPayment = new Map(orderRows.map((o) => [o.paymentId, o.staff]));
+    return orderDetails.filter((d) => {
+      if (cashierFilter === 'All') return true;
+      const staff = staffByPayment.get(d.paymentId) ?? d.staffName ?? '';
+      return staff === cashierFilter;
+    });
+  }, [orderDetails, orderRows, cashierFilter]);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortAsc(v => !v);
     else { setSortKey(key); setSortAsc(false); }
   };
 
-  const handleOrderSort = (key: OrderSortKey) => {
-    if (orderSortKey === key) setOrderSortAsc(v => !v);
-    else { setOrderSortKey(key); setOrderSortAsc(false); }
-  };
-
   const handleExcel = () => {
-    const csv = toCSV(filteredStaff, filteredOrders, dateFrom, dateTo);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const csv = buildShopReportCsv(filteredOrderDetails, dateFrom, dateTo, reportGeneratedAt);
+    const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -306,14 +269,10 @@ export default function ReportsPage() {
           <div>
             <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
               <BarChart3 size={22} className="text-primary" />
-              Revenue Reports
+              SkyBar Shop Report
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Live data from{' '}
-              <code className="text-xs">GET /api/analytics/summary</code> +{' '}
-              <code className="text-xs">GET /api/analytics/transactions</code>
-              {' '}(eye → <code className="text-xs">/analytics/transactions/{'{paymentId}'}</code>,{' '}
-              <code className="text-xs">/orders/details/{'{orderId}'}</code>)
+              Summary, payment breakdown, and line-item detail — print or export for accounting.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -334,7 +293,8 @@ export default function ReportsPage() {
             </button>
             <button
               onClick={handleExcel}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25 text-xs font-semibold transition-all"
+              disabled={loading || loadingDetails}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25 text-xs font-semibold transition-all disabled:opacity-50"
             >
               <FileSpreadsheet size={14} />
               Export Excel / CSV
@@ -367,130 +327,20 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {/* Summary KPIs */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            { label: 'Total Revenue', value: `$${netTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, icon: <TrendingUp size={15} />, color: 'text-primary', bg: 'bg-primary/10 border-primary/20' },
-            { label: 'Avg Order Value', value: `$${avgOrderValue.toFixed(2)}`, icon: <DollarSign size={15} />, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
-            { label: 'Total Orders', value: totalOrders.toLocaleString(), icon: <Receipt size={15} />, color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20' },
-            { label: 'Total Covers', value: totalCovers.toLocaleString(), icon: <Users size={15} />, color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/20' },
-          ].map(kpi => (
-            <div key={kpi.label} className={`rounded-xl border p-4 ${kpi.bg}`}>
-              <div className={`flex items-center gap-1.5 text-xs font-medium mb-2 ${kpi.color}`}>
-                {kpi.icon}
-                {kpi.label}
-              </div>
-              <p className="text-xl font-bold text-foreground">{kpi.value}</p>
-            </div>
-          ))}
-        </div>
+        <SkyBarShopReport
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          generatedAt={reportGeneratedAt}
+          orderDetails={filteredOrderDetails}
+          loading={loading || loadingDetails}
+          onViewOrder={(paymentId) => {
+            const row = orderRows.find((o) => o.paymentId === paymentId);
+            if (row) setDetailRow(row);
+          }}
+        />
 
-        {/* Payment Method Summary */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            { label: 'Cash Total', value: paymentTotals.cash, color: 'text-emerald-400', bg: 'bg-emerald-500/8 border-emerald-500/15', icon: <DollarSign size={13} /> },
-            { label: 'Card Total', value: paymentTotals.card, color: 'text-primary', bg: 'bg-primary/8 border-primary/15', icon: <CreditCard size={13} /> },
-            { label: 'QR / Mobile', value: paymentTotals.qr, color: 'text-amber-400', bg: 'bg-amber-500/8 border-amber-500/15', icon: <QrCode size={13} /> },
-            { label: 'Room Charge', value: paymentTotals.room, color: 'text-purple-400', bg: 'bg-purple-500/8 border-purple-500/15', icon: <BedDouble size={13} /> },
-          ].map(m => (
-            <div key={m.label} className={`rounded-xl border p-3 ${m.bg}`}>
-              <div className={`flex items-center gap-1.5 text-xs font-medium mb-1 ${m.color}`}>
-                {m.icon}
-                {m.label}
-              </div>
-              <p className="text-lg font-bold text-foreground">${m.value.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
-            </div>
-          ))}
-        </div>
-
-        <p className="text-xs text-muted-foreground -mt-3 print:hidden">
-          Payment method totals are calculated from paid orders in the selected date range.
-        </p>
-
-        {/* Order list */}
-        <div className="glass-card rounded-xl border border-border overflow-hidden">
-          <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Receipt size={14} className="text-primary" />
-              Orders — {filteredOrders.length} {filteredOrders.length === 1 ? 'order' : 'orders'}
-            </h2>
-            <span className="text-xs text-muted-foreground">{formatDate(dateFrom)} – {formatDate(dateTo)}</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border bg-muted/20">
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">
-                    <button onClick={() => handleOrderSort('openedAt')} className="flex items-center gap-1 hover:text-foreground transition-colors">
-                      Opened <ArrowUpDown size={10} />
-                    </button>
-                  </th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">
-                    <button onClick={() => handleOrderSort('closedAt')} className="flex items-center gap-1 hover:text-foreground transition-colors">
-                      Closed at <ArrowUpDown size={10} />
-                    </button>
-                  </th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">
-                    <button onClick={() => handleOrderSort('tableLabel')} className="flex items-center gap-1 hover:text-foreground transition-colors">
-                      Table <ArrowUpDown size={10} />
-                    </button>
-                  </th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">
-                    <button onClick={() => handleOrderSort('staff')} className="flex items-center gap-1 hover:text-foreground transition-colors">
-                      Staff <ArrowUpDown size={10} />
-                    </button>
-                  </th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">
-                    <button onClick={() => handleOrderSort('method')} className="flex items-center gap-1 hover:text-foreground transition-colors">
-                      Payment <ArrowUpDown size={10} />
-                    </button>
-                  </th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">
-                    <button onClick={() => handleOrderSort('amount')} className="flex items-center gap-1 ml-auto hover:text-foreground transition-colors">
-                      Amount <ArrowUpDown size={10} />
-                    </button>
-                  </th>
-                  <th className="w-10 py-2.5 px-2 text-muted-foreground font-medium print:hidden" aria-label="Detail" />
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan={7} className="py-12 text-center text-muted-foreground">Loading orders…</td>
-                  </tr>
-                ) : filteredOrders.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="py-12 text-center text-muted-foreground">
-                      No paid orders for the selected date range.
-                    </td>
-                  </tr>
-                ) : filteredOrders.map((o) => (
-                  <tr key={o.id} className="border-b border-border/40 hover:bg-muted/20 transition-colors">
-                    <td className="py-2.5 px-3 text-muted-foreground whitespace-nowrap">{o.openedAt}</td>
-                    <td className="py-2.5 px-3 text-foreground whitespace-nowrap font-medium">{o.closedAt}</td>
-                    <td className="py-2.5 px-3 font-medium text-foreground">{o.tableLabel}</td>
-                    <td className="py-2.5 px-3 text-foreground">{o.staff}</td>
-                    <td className="py-2.5 px-3 text-muted-foreground">{o.method}</td>
-                    <td className="text-right py-2.5 px-3 font-semibold text-primary">${o.amount.toFixed(2)}</td>
-                    <td className="py-2.5 px-2 text-center print:hidden">
-                      <button
-                        type="button"
-                        title="View payment & order detail"
-                        onClick={() => setDetailRow(o)}
-                        className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-border text-muted-foreground hover:text-primary hover:border-primary/40 hover:bg-primary/10 transition-all"
-                      >
-                        <Eye size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Staff report table */}
-        <div className="glass-card rounded-xl border border-border overflow-hidden">
+        {/* Staff performance (screen only) */}
+        <div className="glass-card rounded-xl border border-border overflow-hidden print:hidden">
           <div className="px-5 py-3 border-b border-border flex items-center justify-between">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
               <Receipt size={14} className="text-primary" />
@@ -573,8 +423,13 @@ export default function ReportsPage() {
       <style jsx global>{`
         @media print {
           .print\\:hidden { display: none !important; }
-          body { background: white; color: black; }
-          .glass-card { background: white; border: 1px solid #ddd; }
+          body { background: white !important; color: black !important; }
+          main { max-width: none !important; padding: 0 !important; }
+          .skybar-shop-report {
+            box-shadow: none !important;
+            border: none !important;
+            border-radius: 0 !important;
+          }
         }
       `}</style>
     </div>

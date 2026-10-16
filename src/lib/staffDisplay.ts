@@ -41,24 +41,64 @@ export async function ensureStaffNameCache(options?: { force?: boolean }): Promi
   nameById = merged;
 }
 
+function scalarOrFromStaffObject(
+  v: unknown,
+  pick: 'id' | 'name',
+): string {
+  if (v == null) return '';
+  if (typeof v === 'object' && !Array.isArray(v)) {
+    const o = v as Record<string, unknown>;
+    if (pick === 'id') {
+      const id = o.id ?? o.staffId ?? o.userId;
+      if (id != null && typeof id !== 'object') return String(id).trim();
+      return '';
+    }
+    const name = o.name ?? o.staffName ?? o.displayName;
+    if (name != null && typeof name !== 'object') return String(name).trim();
+    return '';
+  }
+  const s = String(v).trim();
+  if (!s || s === '[object Object]') return '';
+  return s;
+}
+
 /** Normalize staff id/name from API JSON (camelCase or snake_case). */
 export function pickStaffFields(raw: Record<string, unknown>): { staffId: string; staffName: string } {
-  let staffId = String(
-    raw.staffId ?? raw.staff_id ?? raw.cashierId ?? raw.cashier_id ?? raw.openedByStaffId ?? '',
-  ).trim();
-  const staffLegacy = String(raw.staff ?? raw.cashier ?? raw.cashierName ?? '').trim();
+  let staffId =
+    scalarOrFromStaffObject(raw.staffId, 'id')
+    || scalarOrFromStaffObject(raw.staff_id, 'id')
+    || scalarOrFromStaffObject(raw.staff, 'id')
+    || scalarOrFromStaffObject(raw.openedByStaffId, 'id')
+    || scalarOrFromStaffObject(raw.openedBy, 'id')
+    || scalarOrFromStaffObject(raw.cashierId, 'id')
+    || scalarOrFromStaffObject(raw.cashier, 'id')
+    || '';
 
-  // `staff` is often a display name or "unknown" — only use as id when it looks like u2 / UUID
+  const staffLegacy = scalarOrFromStaffObject(raw.staff, 'name')
+    || scalarOrFromStaffObject(raw.cashier, 'name');
+
   if (!staffId && staffLegacy && /^u[\w-]+$/i.test(staffLegacy)) {
     staffId = staffLegacy;
   }
 
-  let staffName = String(raw.name ?? raw.staffName ?? raw.staff_name ?? raw.cashierName ?? '').trim();
+  let staffName =
+    scalarOrFromStaffObject(raw.name, 'name')
+    || scalarOrFromStaffObject(raw.staffName, 'name')
+    || scalarOrFromStaffObject(raw.staff_name, 'name')
+    || scalarOrFromStaffObject(raw.staff, 'name')
+    || scalarOrFromStaffObject(raw.staffId, 'name')
+    || scalarOrFromStaffObject(raw.openedByStaffName, 'name')
+    || scalarOrFromStaffObject(raw.openedBy, 'name')
+    || scalarOrFromStaffObject(raw.cashierName, 'name')
+    || scalarOrFromStaffObject(raw.cashier, 'name')
+    || '';
+
   if (!staffName && staffLegacy && !/^u[\w-]+$/i.test(staffLegacy)) {
     staffName = staffLegacy;
   }
 
   if (staffId && isPlaceholderStaffLabel(staffId)) staffId = '';
+  if (staffName === '[object Object]') staffName = '';
 
   return { staffId, staffName };
 }
@@ -79,7 +119,11 @@ export function registerStaffNames(entries: Record<string, string>): void {
 /** Resolve staff label from API fields (staffId, staffName, or legacy staff string). */
 export function resolveStaffDisplay(raw: Record<string, unknown>): string {
   const { staffId: id, staffName: explicitFromPick } = pickStaffFields(raw);
-  const explicit = String(raw.staffName ?? raw.staff_name ?? explicitFromPick ?? '').trim();
+  let explicit = String(raw.staffName ?? raw.staff_name ?? explicitFromPick ?? '').trim();
+  if (explicit === '[object Object]') explicit = explicitFromPick;
+  if (!explicit || explicit === '[object Object]') {
+    explicit = scalarOrFromStaffObject(raw.staff, 'name') || scalarOrFromStaffObject(raw.staffId, 'name');
+  }
 
   if (explicit && !isPlaceholderStaffLabel(explicit)) return explicit;
 

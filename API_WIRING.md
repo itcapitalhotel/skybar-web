@@ -34,7 +34,7 @@ This document maps every frontend file to the API endpoints it calls. All paths 
 
 | File | APIs Used |
 |------|-----------|
-| `src/app/components/FloorMapClient.tsx` | `GET /tables`, `GET /zones`, `GET /orders/{tableId}`, `PATCH /tables/{id}/status`, `POST /orders/{tableId}/items`, `PATCH /orders/{tableId}/items/{id}/void`, `POST /tables/transfer`, `DELETE /orders/{tableId}` |
+| `src/app/components/FloorMapClient.tsx` | Open/close: `PATCH /tables/{id}/status` (`guestCount`), `POST /orders/{tableId}/items` (`guestCount`, store `orderId`), `GET /orders/{tableId}`, pay/split with `guestCount` — see `docs/FRONTEND_OPEN_CLOSE_ORDER.md` |
 | `src/app/components/FloorCanvas.tsx` | `GET /zones` |
 | `src/app/components/MenuOverlay.tsx` | `GET /menu`, `GET /menu/categories`, `POST /orders/{tableId}/items` (via parent) |
 | `src/app/components/NewTableDrawer.tsx` | `POST /tables` |
@@ -66,7 +66,7 @@ This document maps every frontend file to the API endpoints it calls. All paths 
 | `src/app/zone-management/page.tsx` | Full `zonesApi` CRUD + `PATCH /zones/{id}/toggle` |
 | `src/app/user-management/page.tsx` | Full `usersApi` CRUD + `PATCH /users/{id}/status` |
 | `src/app/staff-management/page.tsx` | `usersApi` / `staffApi` + PIN endpoints |
-| `src/app/admin-config/page.tsx` | Receipt: `GET/PUT /config`, zone receipt printers CRUD; Receipt Layout preview via `ReceiptPreview` + `GET /receipts/{paymentId}` — see `docs/FRONTEND_RECEIPT_PREVIEW.md`. Category Printer: see `docs/FRONTEND_CATEGORY_PRINTERS.md` |
+| `src/app/admin-config/page.tsx` | Receipt: `GET/PUT /config`, zone receipt printers CRUD; Receipt Layout preview via `ReceiptPreview` + `GET /receipts/{paymentId}` — see `docs/FRONTEND_RECEIPT_PREVIEW.md`. Category Printer: per-tab `GET /menu/category-printers/{id}`, mappings bootstrap, `PUT /menu/categories/{id}/printers`; picker `GET /kitchen-printers` only — see `docs/FRONTEND_ADMIN_CATEGORY_PRINTERS.md` |
 | `src/app/stock-management/page.tsx` | `GET /stock`, `PATCH /stock/{id}/count`, `POST /stock/bulk-update`, `GET /stock/{id}/history`, `POST /stock/reconcile` |
 | `src/app/notifications/page.tsx` | Full `notificationsApi` |
 | `src/app/manager-dashboard/page.tsx` | `GET /dashboard/*` (via `dashboardApi.full()`) |

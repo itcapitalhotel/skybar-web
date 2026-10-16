@@ -29,6 +29,7 @@ interface SplitBillModalProps {
   tableId: string;
   /** Display label (e.g. V3) */
   tableLabel?: string;
+  guestCount?: number;
   onSplitComplete?: () => void;
 }
 
@@ -121,6 +122,7 @@ export default function SplitBillModal({
   total,
   tableId,
   tableLabel,
+  guestCount = 1,
   onSplitComplete,
 }: SplitBillModalProps) {
   const [mode, setMode] = useState<SplitMode>('equal');
@@ -278,7 +280,13 @@ export default function SplitBillModal({
         return;
       }
 
-      await paymentsApi.split({ tableId, splits, staffId, cashierId: staffId });
+      await paymentsApi.split({
+        tableId,
+        guestCount: Math.max(1, guestCount),
+        splits,
+        staffId,
+        cashierId: staffId,
+      });
       toast.success(`Bill split into ${splits.length} — receipts ready for printing`);
       onSplitComplete?.();
       onClose();

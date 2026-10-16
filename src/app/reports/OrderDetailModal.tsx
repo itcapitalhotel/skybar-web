@@ -15,7 +15,13 @@ import type {
   OrderSplitSession,
   OrderTransferRecord,
 } from '@/lib/api/types';
-import { finalizeStaffDisplay, pickStaffFields, resolveStaffDisplay } from '@/lib/staffDisplay';
+import {
+  ensureStaffNameCache,
+  finalizeStaffDisplay,
+  pickStaffFields,
+  registerStaffNames,
+  resolveStaffDisplay,
+} from '@/lib/staffDisplay';
 
 function fmtWhen(iso?: string): string {
   if (!iso) return '—';
@@ -27,18 +33,20 @@ function fmtWhen(iso?: string): string {
   }
 }
 
-function staffLabel(raw: {
+function staffLabel(raw: Record<string, unknown> & {
   staffId?: string;
   staffName?: string;
   staffRole?: string;
   name?: string;
 }): string {
   const fields = pickStaffFields(raw as Record<string, unknown>);
-  const name = finalizeStaffDisplay({
-    staffId: fields.staffId || raw.staffId,
-    staffName: fields.staffName || raw.staffName || raw.name,
-  }, fields.staffId || raw.staffId);
-  if (raw.staffRole && name !== 'Unassigned') return `${name} · ${raw.staffRole}`;
+  const resolved = resolveStaffDisplay(raw as Record<string, unknown>);
+  const name = finalizeStaffDisplay(resolved, fields.staffId);
+  const role =
+    typeof raw.staffRole === 'string' && raw.staffRole.trim() && raw.staffRole !== '[object Object]'
+      ? raw.staffRole.trim()
+      : '';
+  if (role && name !== 'Unassigned') return `${name} · ${role}`;
   return name;
 }
 
@@ -90,11 +98,13 @@ export default function OrderDetailModal({
       const tried: string[] = [];
       let analyticsError: string | null = null;
 
+      await ensureStaffNameCache();
+
       try {
         tried.push(`GET /api/analytics/transactions/${paymentId}`);
         const detail = await analyticsApi.getTransaction(paymentId);
         if (cancelled) return;
-        setTxn(detail);
+        let merged = detail;
         if (detail.legacyPayment) {
           setLoadNote(
             'Legacy payment — the order was removed at checkout, so line items are not stored. Totals, zone, room, and staff come from the payment record.',
@@ -106,12 +116,23 @@ export default function OrderDetailModal({
             const od = await ordersApi.getDetails(oid);
             if (!cancelled) {
               const overlay = normalizeOrderDetailResponse(od as unknown as Record<string, unknown>);
-              setTxn(mergeOrderDetailLayers(detail, overlay, paymentId));
+              merged = mergeOrderDetailLayers(detail, overlay, paymentId);
             }
           } catch {
             /* analytics payload is enough */
           }
         }
+        if (listSnapshot?.staff) {
+          const sid = merged.openedByStaffId ?? merged.staffId;
+          if (sid) registerStaffNames({ [sid]: listSnapshot.staff });
+          if (!merged.openedByStaffName) {
+            merged = { ...merged, openedByStaffName: listSnapshot.staff };
+          }
+          if (!merged.staffName && !merged.cashierName) {
+            merged = { ...merged, staffName: listSnapshot.staff };
+          }
+        }
+        setTxn(merged);
         return;
       } catch (err) {
         if (cancelled) return;
@@ -157,6 +178,7 @@ export default function OrderDetailModal({
           amount: listSnapshot.amount,
           total: listSnapshot.amount,
           time: listSnapshot.time,
+          openedByStaffName: listSnapshot.staff,
           staffName: listSnapshot.staff,
         });
         setLoadNote(analyticsError ?? 'Showing Reports list summary only.');
@@ -267,13 +289,38 @@ export default function OrderDetailModal({
               <section className="grid grid-cols-2 gap-2">
                 <InfoChip icon={<CreditCard size={12} />} label="Payment" value={`${paymentMethodLabel(txn)} · $${displayTotal.toFixed(2)}`} />
                 <InfoChip icon={<Clock size={12} />} label="Closed at" value={fmtWhen(txn.closedAt ?? txn.time)} />
-                <InfoChip icon={<Users size={12} />} label="Staff" value={staffLabel(txn)} />
+                <InfoChip
+                  icon={<Users size={12} />}
+                  label="Opened by"
+                  value={staffLabel({
+                    ...(txn as unknown as Record<string, unknown>),
+                    staffId: txn.openedByStaffId ?? txn.staffId,
+                    staffName: txn.openedByStaffName ?? txn.staffName ?? listSnapshot?.staff,
+                    staffRole: txn.openedByStaffRole ?? txn.staffRole,
+                  })}
+                />
+                {(txn.cashierName || txn.cashierId || (txn.staffName && txn.staffName !== txn.openedByStaffName)) ? (
+                  <InfoChip
+                    icon={<Users size={12} />}
+                    label="Paid by"
+                    value={staffLabel({
+                      ...(txn as unknown as Record<string, unknown>),
+                      staffId: txn.cashierId ?? txn.staffId,
+                      staffName: txn.cashierName ?? txn.staffName,
+                      staffRole: txn.staffRole,
+                    })}
+                  />
+                ) : null}
                 <InfoChip icon={<MapPin size={12} />} label="Table" value={txn.tableLabel || tableLabel || '—'} />
                 {txn.zoneLabel && (
                   <InfoChip icon={<MapPin size={12} />} label="Zone" value={txn.zoneLabel} />
                 )}
-                {txn.covers != null && (
-                  <InfoChip icon={<Users size={12} />} label="Covers" value={String(txn.covers)} />
+                {(txn.guestCount != null || txn.covers != null) && (
+                  <InfoChip
+                    icon={<Users size={12} />}
+                    label="Guests"
+                    value={String(txn.guestCount ?? txn.covers)}
+                  />
                 )}
                 {txn.shiftId && (
                   <InfoChip icon={<Receipt size={12} />} label="Shift" value={txn.shiftId} />

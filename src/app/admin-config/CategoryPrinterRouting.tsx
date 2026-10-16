@@ -14,12 +14,17 @@ import {
 } from '@/lib/printerTcpTest';
 import { PrinterPingIndicators } from '@/app/admin-config/PrinterPingIndicators';
 
-type PrinterRow = CategoryKitchenPrinter & { rowKey: string };
+type PrinterRow = CategoryKitchenPrinter & {
+  rowKey: string;
+  /** Send `id` on PUT only when row came from this category's GET/PUT */
+  idOwnedByCategory?: boolean;
+};
 
 function toRows(printers: CategoryKitchenPrinter[]): PrinterRow[] {
   return printers.map((p, i) => ({
     ...p,
     rowKey: p.id ?? `loaded-${i}-${p.printerIp}`,
+    idOwnedByCategory: Boolean(p.id),
   }));
 }
 
@@ -35,22 +40,26 @@ function newEmptyRow(): PrinterRow {
 function rowsToPayload(rows: PrinterRow[]): CategoryKitchenPrinter[] {
   return rows
     .filter((r) => r.name.trim() || r.printerIp.trim())
-    .map(({ rowKey: _k, ...rest }) => {
+    .map(({ rowKey: _k, idOwnedByCategory, ...rest }) => {
       const out: CategoryKitchenPrinter = {
         name: rest.name.trim() || 'Printer',
         printerIp: rest.printerIp.trim(),
         printerPort: Number(rest.printerPort) || 9100,
       };
-      if (rest.id) out.id = rest.id;
+      if (rest.id && idOwnedByCategory) out.id = rest.id;
       return out;
     });
 }
 
 export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }) {
   const [categories, setCategories] = useState<MenuCategory[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [pickerStations, setPickerStations] = useState<KitchenPrinter[]>([]);
-  const [rowsByCategory, setRowsByCategory] = useState<Record<string, PrinterRow[]>>({});
-  const [loading, setLoading] = useState(true);
+  const [pickerLoaded, setPickerLoaded] = useState(false);
+  const [printersByCategory, setPrintersByCategory] = useState<Record<string, PrinterRow[]>>({});
+  const [loadedCategoryIds, setLoadedCategoryIds] = useState<Set<string>>(() => new Set());
+  const [loadingCategoryId, setLoadingCategoryId] = useState<string | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [savingCategoryId, setSavingCategoryId] = useState<string | null>(null);
   const [rowPingSlots, setRowPingSlots] = useState<Record<string, PingSlot[]>>({});
   const [rowPingRunning, setRowPingRunning] = useState<Record<string, boolean>>({});
@@ -58,40 +67,80 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
 
   const rowPingKey = (categoryId: string, rowKey: string) => `${categoryId}:${rowKey}`;
 
-  const loadAll = useCallback(async () => {
-    setLoading(true);
+  const loadPickerCatalog = useCallback(async () => {
+    if (pickerLoaded) return;
     try {
-      const [cats, stations] = await Promise.all([
-        menuCategoryApi.list(),
-        kitchenPrintersApi.list().catch(() => [] as KitchenPrinter[]),
-      ]);
-      const active = cats.filter((c) => c.isActive !== false);
-      setCategories(active);
+      const stations = await kitchenPrintersApi.list();
       setPickerStations(stations);
-
-      const entries = await Promise.all(
-        active.map(async (cat) => {
-          try {
-            const res = await menuCategoryApi.getPrinters(cat.id);
-            return [cat.id, toRows(res.printers ?? [])] as const;
-          } catch {
-            return [cat.id, [] as PrinterRow[]] as const;
-          }
-        }),
-      );
-      const map: Record<string, PrinterRow[]> = {};
-      for (const [id, rows] of entries) map[id] = rows;
-      setRowsByCategory(map);
+      setPickerLoaded(true);
     } catch {
-      toast.error('Could not load category printers');
-    } finally {
-      setLoading(false);
+      setPickerStations([]);
     }
+  }, [pickerLoaded]);
+
+  const applyMappingsToState = useCallback((mappings: { categoryId: string; printers: CategoryKitchenPrinter[] }[]) => {
+    const map: Record<string, PrinterRow[]> = {};
+    const loaded = new Set<string>();
+    for (const m of mappings) {
+      map[m.categoryId] = toRows(m.printers ?? []);
+      loaded.add(m.categoryId);
+    }
+    setPrintersByCategory((prev) => ({ ...prev, ...map }));
+    setLoadedCategoryIds((prev) => new Set([...prev, ...loaded]));
   }, []);
 
+  const loadCategoryPrinters = useCallback(async (categoryId: string, force = false) => {
+    if (!force && loadedCategoryIds.has(categoryId)) return;
+    setLoadingCategoryId(categoryId);
+    try {
+      const res = await menuCategoryApi.loadCategoryPrintersView(categoryId);
+      setPrintersByCategory((prev) => ({
+        ...prev,
+        [categoryId]: toRows(res.printers ?? []),
+      }));
+      setLoadedCategoryIds((prev) => new Set(prev).add(categoryId));
+    } catch {
+      toast.error('Could not load printers for this category');
+    } finally {
+      setLoadingCategoryId(null);
+    }
+  }, [loadedCategoryIds]);
+
+  const loadInitial = useCallback(async () => {
+    setInitialLoading(true);
+    try {
+      const cats = await menuCategoryApi.list();
+      const active = cats.filter((c) => c.isActive !== false);
+      setCategories(active);
+      if (active.length > 0) {
+        setSelectedCategoryId((prev) => (prev && active.some((c) => c.id === prev) ? prev : active[0].id));
+      }
+
+      try {
+        const mappings = await menuCategoryApi.getPrinterMappings();
+        applyMappingsToState(mappings);
+      } catch {
+        await Promise.all(
+          active.map(async (cat) => {
+            try {
+              const res = await menuCategoryApi.loadCategoryPrintersView(cat.id);
+              return { categoryId: cat.id, printers: res.printers ?? [] };
+            } catch {
+              return { categoryId: cat.id, printers: [] as CategoryKitchenPrinter[] };
+            }
+          }),
+        ).then(applyMappingsToState);
+      }
+    } catch {
+      toast.error('Could not load categories');
+    } finally {
+      setInitialLoading(false);
+    }
+  }, [applyMappingsToState]);
+
   useEffect(() => {
-    void loadAll();
-  }, [loadAll, reloadToken]);
+    void loadInitial();
+  }, [loadInitial, reloadToken]);
 
   const updateRow = (
     categoryId: string,
@@ -108,7 +157,7 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
         return next;
       });
     }
-    setRowsByCategory((prev) => ({
+    setPrintersByCategory((prev) => ({
       ...prev,
       [categoryId]: (prev[categoryId] ?? []).map((r) =>
         r.rowKey === rowKey
@@ -119,14 +168,14 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
   };
 
   const addRow = (categoryId: string) => {
-    setRowsByCategory((prev) => ({
+    setPrintersByCategory((prev) => ({
       ...prev,
       [categoryId]: [...(prev[categoryId] ?? []), newEmptyRow()],
     }));
   };
 
   const removeRow = (categoryId: string, rowKey: string) => {
-    setRowsByCategory((prev) => ({
+    setPrintersByCategory((prev) => ({
       ...prev,
       [categoryId]: (prev[categoryId] ?? []).filter((r) => r.rowKey !== rowKey),
     }));
@@ -136,16 +185,17 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
     if (!stationId) return;
     const station = pickerStations.find((s) => s.id === stationId);
     if (!station) return;
-    setRowsByCategory((prev) => ({
+    const alreadyLinkedHere = station.categoryIds?.includes(categoryId) ?? false;
+    setPrintersByCategory((prev) => ({
       ...prev,
       [categoryId]: [
         ...(prev[categoryId] ?? []),
         {
-          rowKey: `pick-${station.id}-${Date.now()}`,
-          id: station.id,
+          rowKey: `pick-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           name: station.name,
           printerIp: station.printerIp,
           printerPort: station.printerPort,
+          ...(alreadyLinkedHere ? { id: station.id, idOwnedByCategory: true } : {}),
         },
       ],
     }));
@@ -165,7 +215,7 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
     setRowPingDetail((prev) => ({ ...prev, [key]: '' }));
     setRowPingSlots((prev) => ({ ...prev, [key]: idlePingSlots() }));
     try {
-      const ok = await runTcpPrinterPingSeries(row.printerIp, row.printerPort, (index, slot) => {
+      await runTcpPrinterPingSeries(row.printerIp, row.printerPort, (index, slot) => {
         setRowPingSlots((prev) => {
           const slots = [...(prev[key] ?? idlePingSlots())];
           slots[index] = slot;
@@ -181,16 +231,13 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
           toast.success(`${row.name || 'Printer'}: reachable`);
         }
       });
-      if (!ok) {
-        /* toast from onComplete */
-      }
     } finally {
       setRowPingRunning((prev) => ({ ...prev, [key]: false }));
     }
   };
 
   const saveCategory = async (categoryId: string) => {
-    const rows = rowsByCategory[categoryId] ?? [];
+    const rows = printersByCategory[categoryId] ?? [];
     const activeRows = rows.filter((r) => r.name.trim() || r.printerIp.trim());
     for (const row of activeRows) {
       const p = rowsToPayload([row])[0];
@@ -200,8 +247,8 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
         toast.error(`${p.name}: ${check.error}`);
         return;
       }
-      const key = rowPingKey(categoryId, row.rowKey);
-      const slots = rowPingSlots[key];
+      const pingKey = rowPingKey(categoryId, row.rowKey);
+      const slots = rowPingSlots[pingKey];
       const tested = slots && !slots.every((s) => s === 'idle');
       const okHits = slots?.filter((s) => s === 'ok').length ?? 0;
       if (tested && okHits === 0) {
@@ -212,13 +259,16 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
     const payload = rowsToPayload(rows);
     setSavingCategoryId(categoryId);
     try {
-      const res = await menuCategoryApi.setPrinters(categoryId, payload);
-      setRowsByCategory((prev) => ({
+      await menuCategoryApi.setPrinters(categoryId, payload);
+      const fresh = await menuCategoryApi.loadCategoryPrintersView(categoryId);
+      setPrintersByCategory((prev) => ({
         ...prev,
-        [categoryId]: toRows(res.printers ?? payload),
+        [categoryId]: toRows(fresh.printers ?? []),
       }));
-      toast.success('Category printers saved');
-      void kitchenPrintersApi.list().then(setPickerStations).catch(() => {});
+      setLoadedCategoryIds((prev) => new Set(prev).add(categoryId));
+      toast.success('Saved for this category only');
+      setPickerLoaded(false);
+      void loadPickerCatalog();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Save failed');
     } finally {
@@ -226,7 +276,7 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
     }
   };
 
-  if (loading) {
+  if (initialLoading) {
     return <p className="text-xs text-muted-foreground py-6 text-center">Loading category printers…</p>;
   }
 
@@ -238,173 +288,199 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
     );
   }
 
+  const activeCat = categories.find((c) => c.id === selectedCategoryId) ?? categories[0];
+  const categoryId = activeCat.id;
+  const rows = printersByCategory[categoryId] ?? [];
+  const tabLoading = loadingCategoryId === categoryId;
+
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
         <div className="flex items-start gap-2">
           <Link2 size={16} className="text-primary mt-0.5 flex-shrink-0" />
           <div className="text-xs text-muted-foreground space-y-1">
-            <p className="text-sm font-semibold text-foreground">Category + name + IP + port only</p>
+            <p className="text-sm font-semibold text-foreground">One printer list per category</p>
             <p>
-              Save with <span className="font-mono">PUT /api/menu/categories/{'{categoryId}'}/printers</span>{' '}
-              and body <span className="font-mono">{`{ "printers": [...] }`}</span>. No zone. Separate from Receipt Printer.
+              Tab load: <span className="font-mono">GET /api/menu/category-printers/{'{categoryId}'}</span> → bind{' '}
+              <span className="font-mono">response.printers</span> only. Bootstrap:{' '}
+              <span className="font-mono">GET …/category-printers/mappings</span>.
             </p>
             <p>
-              Orders: <span className="font-mono">kitchenPrintJobs</span> + WebSocket{' '}
-              <span className="font-mono">/topic/print/kitchen</span>.
+              Save: <span className="font-mono">PUT …/categories/{'{categoryId}'}/printers</span>, then re-GET that
+              category. <span className="font-mono">GET /api/kitchen-printers</span> = picker only.
             </p>
-            <p>
-              Use <strong className="text-foreground font-medium">Test ×5</strong> (TCP via{' '}
-              <span className="font-mono">POST /api/config/printer/test</span>) before Save. Save is blocked if the
-              last test for a row was all failures.
-            </p>
+            <p className="font-mono text-[10px] text-foreground/70">docs/FRONTEND_ADMIN_CATEGORY_PRINTERS.md</p>
           </div>
         </div>
       </div>
 
       <div className="rounded-xl border border-border overflow-hidden">
-        <div className="px-4 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
-          <Tag size={14} className="text-purple-400" />
-          <span className="text-xs font-semibold uppercase tracking-wide text-foreground">Per category</span>
-        </div>
-        <div className="divide-y divide-border/50">
+        <div className="px-3 py-2 border-b border-border bg-muted/20 flex flex-wrap gap-1.5">
           {categories.map((cat) => {
-            const rows = rowsByCategory[cat.id] ?? [];
+            const count = (printersByCategory[cat.id] ?? []).length;
+            const selected = cat.id === categoryId;
             return (
-              <div key={cat.id} className="p-4 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-foreground">
-                    {cat.icon} {cat.label}
-                  </span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {pickerStations.length > 0 ? (
-                      <select
-                        defaultValue=""
-                        onChange={(e) => {
-                          applyPicker(cat.id, e.target.value);
-                          e.target.value = '';
-                        }}
-                        className="text-xs bg-background border border-border rounded-lg px-2 py-1.5 max-w-[11rem]"
-                      >
-                        <option value="">Copy existing station…</option>
-                        {pickerStations.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name} ({s.printerIp})
-                          </option>
-                        ))}
-                      </select>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => addRow(cat.id)}
-                      className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs border border-border hover:bg-muted/40"
-                    >
-                      <Plus size={12} />
-                      Add row
-                    </button>
-                    <button
-                      type="button"
-                      disabled={savingCategoryId === cat.id}
-                      onClick={() => void saveCategory(cat.id)}
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-primary/30 text-primary hover:bg-primary/10 disabled:opacity-50"
-                    >
-                      <Save size={12} />
-                      {savingCategoryId === cat.id ? 'Saving…' : 'Save'}
-                    </button>
-                  </div>
-                </div>
-
-                {rows.length === 0 ? (
-                  <p className="text-xs text-muted-foreground italic">No printers — add a row or copy an existing station.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {rows.map((row) => {
-                      const pingKey = rowPingKey(cat.id, row.rowKey);
-                      const pingSlots = rowPingSlots[pingKey] ?? idlePingSlots();
-                      const pingRunning = Boolean(rowPingRunning[pingKey]);
-                      const endpointOk = validatePrinterEndpoint(row.printerIp, row.printerPort).ok;
-                      return (
-                        <div key={row.rowKey} className="space-y-2 rounded-lg border border-border/60 p-3 bg-background/40">
-                          <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_5rem_auto] gap-2 items-end">
-                            <div>
-                              <label className="block text-[10px] uppercase text-muted-foreground mb-1">Name</label>
-                              <input
-                                value={row.name}
-                                onChange={(e) => updateRow(cat.id, row.rowKey, 'name', e.target.value)}
-                                placeholder="Bar"
-                                className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[10px] uppercase text-muted-foreground mb-1">IP</label>
-                              <input
-                                value={row.printerIp}
-                                onChange={(e) => updateRow(cat.id, row.rowKey, 'printerIp', e.target.value)}
-                                placeholder="192.168.1.50"
-                                className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm font-mono"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[10px] uppercase text-muted-foreground mb-1">Port</label>
-                              <input
-                                value={String(row.printerPort ?? 9100)}
-                                onChange={(e) => updateRow(cat.id, row.rowKey, 'printerPort', e.target.value)}
-                                className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm font-mono"
-                              />
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => removeRow(cat.id, row.rowKey)}
-                              className="p-2 rounded-lg text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 mb-0.5"
-                              title="Remove row"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => void handleTestRow(cat.id, row)}
-                              disabled={pingRunning || !endpointOk}
-                              title={
-                                endpointOk
-                                  ? 'TCP test ×5 (same as Receipt Printer)'
-                                  : 'Enter a valid IPv4 and port first'
-                              }
-                              className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {pingRunning ? (
-                                <>
-                                  <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                  Ping…
-                                </>
-                              ) : (
-                                <>
-                                  <Wifi size={12} />
-                                  Test ×5
-                                </>
-                              )}
-                            </button>
-                            <PrinterPingIndicators slots={pingSlots} />
-                            {pingSummary(pingSlots) ? (
-                              <span className="text-[10px] text-muted-foreground tabular-nums">
-                                {pingSummary(pingSlots)}
-                              </span>
-                            ) : null}
-                            {rowPingDetail[pingKey] ? (
-                              <span className="text-[10px] text-muted-foreground max-w-md truncate" title={rowPingDetail[pingKey]}>
-                                {rowPingDetail[pingKey]}
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => {
+                  setSelectedCategoryId(cat.id);
+                  void loadCategoryPrinters(cat.id, true);
+                }}
+                className={[
+                  'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border',
+                  selected
+                    ? 'bg-primary/15 border-primary/40 text-primary'
+                    : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40',
+                ].join(' ')}
+              >
+                {cat.icon} {cat.label}
+                {count > 0 ? (
+                  <span className="ml-1.5 tabular-nums opacity-70">({count})</span>
+                ) : null}
+              </button>
             );
           })}
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Tag size={14} className="text-purple-400" />
+              {activeCat.icon} {activeCat.label}
+              {tabLoading ? <span className="text-xs font-normal text-muted-foreground">Loading…</span> : null}
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                defaultValue=""
+                onFocus={() => void loadPickerCatalog()}
+                onChange={(e) => {
+                  applyPicker(categoryId, e.target.value);
+                  e.target.value = '';
+                }}
+                className="text-xs bg-background border border-border rounded-lg px-2 py-1.5 max-w-[13rem]"
+              >
+                <option value="">Copy existing station…</option>
+                {pickerStations.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.printerIp})
+                    {s.categoryIds?.length ? ` · ${s.categoryIds.length} cat` : ''}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => addRow(categoryId)}
+                className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs border border-border hover:bg-muted/40"
+              >
+                <Plus size={12} />
+                Add row
+              </button>
+              <button
+                type="button"
+                disabled={savingCategoryId === categoryId || tabLoading}
+                onClick={() => void saveCategory(categoryId)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-primary/30 text-primary hover:bg-primary/10 disabled:opacity-50"
+              >
+                <Save size={12} />
+                {savingCategoryId === categoryId ? 'Saving…' : 'Save category'}
+              </button>
+            </div>
+          </div>
+
+          {rows.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic py-4 text-center">
+              No printers for {activeCat.label}. Other categories keep their own lists.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {rows.map((row) => {
+                const pingKey = rowPingKey(categoryId, row.rowKey);
+                const pingSlots = rowPingSlots[pingKey] ?? idlePingSlots();
+                const pingRunning = Boolean(rowPingRunning[pingKey]);
+                const endpointOk = validatePrinterEndpoint(row.printerIp, row.printerPort).ok;
+                return (
+                  <div key={row.rowKey} className="space-y-2 rounded-lg border border-border/60 p-3 bg-background/40">
+                    <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_5rem_auto] gap-2 items-end">
+                      <div>
+                        <label className="block text-[10px] uppercase text-muted-foreground mb-1">Name</label>
+                        <input
+                          value={row.name}
+                          onChange={(e) => updateRow(categoryId, row.rowKey, 'name', e.target.value)}
+                          placeholder="Bar"
+                          className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase text-muted-foreground mb-1">IP</label>
+                        <input
+                          value={row.printerIp}
+                          onChange={(e) => updateRow(categoryId, row.rowKey, 'printerIp', e.target.value)}
+                          placeholder="192.168.1.50"
+                          className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase text-muted-foreground mb-1">Port</label>
+                        <input
+                          value={String(row.printerPort ?? 9100)}
+                          onChange={(e) => updateRow(categoryId, row.rowKey, 'printerPort', e.target.value)}
+                          className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm font-mono"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeRow(categoryId, row.rowKey)}
+                        className="p-2 rounded-lg text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 mb-0.5"
+                        title="Remove row"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleTestRow(categoryId, row)}
+                        disabled={pingRunning || !endpointOk}
+                        title={
+                          endpointOk
+                            ? 'TCP test ×5 (same as Receipt Printer)'
+                            : 'Enter a valid IPv4 and port first'
+                        }
+                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {pingRunning ? (
+                          <>
+                            <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                            Ping…
+                          </>
+                        ) : (
+                          <>
+                            <Wifi size={12} />
+                            Test ×5
+                          </>
+                        )}
+                      </button>
+                      <PrinterPingIndicators slots={pingSlots} />
+                      {pingSummary(pingSlots) ? (
+                        <span className="text-[10px] text-muted-foreground tabular-nums">
+                          {pingSummary(pingSlots)}
+                        </span>
+                      ) : null}
+                      {rowPingDetail[pingKey] ? (
+                        <span
+                          className="text-[10px] text-muted-foreground max-w-md truncate"
+                          title={rowPingDetail[pingKey]}
+                        >
+                          {rowPingDetail[pingKey]}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
