@@ -874,7 +874,30 @@ Full menu with categories and items.
 
 #### `GET /api/menu/categories`
 
-**Response:** `["Cocktails", "Spirits", "Wine & Bubbles", "Beer", "Bites", "Hookah"]`
+**Response:** array of category objects — see `docs/FRONTEND_MENU_CATEGORY.md` (`categoryType`: `food` | `drink`).
+
+```json
+[
+  {
+    "id": "cocktails",
+    "label": "Cocktails",
+    "icon": "🍸",
+    "sortOrder": 0,
+    "isActive": true,
+    "categoryType": "drink"
+  }
+]
+```
+
+#### `POST /api/menu/categories` — **Auth:** Admin/Manager
+
+**Request:** `{ "label", "categoryType" (required), "id?", "icon?", "sortOrder?", "isActive?" }`
+
+#### `PUT /api/menu/categories/{categoryId}` — **Auth:** Admin/Manager
+
+**Request body:** use **`categoryType`** only (`food` | `drink`). Do **not** send JSON property **`type`** — Jackson `UpdateMenuCategoryRequest` fails deserialization with 500 if `type` is present alongside a `@JsonCreator` on `categoryType`. Frontend: `docs/FRONTEND_MENU_CATEGORY.md`. Omit optional fields instead of `null` (e.g. avoid `"sortOrder": null`).
+
+#### `DELETE /api/menu/categories/{categoryId}` — **Auth:** Admin
 
 #### `POST /api/menu` — **Auth:** Admin/Manager
 
@@ -942,11 +965,15 @@ Process payment. Clears order and updates table status.
   "total": 452.79,
   "cashTendered": null,
   "roomNumber": null,
-  "discount": 0
+  "discount": 0,
+  "foodSubtotal": 40.0,
+  "drinkSubtotal": 60.0
 }
 ```
 
-> `method` values: `cash` | `card` | `qr` | `room`
+> `method` values: `cash` | `card` | `qr` | `room`  
+> Optional **`foodSubtotal`** / **`drinkSubtotal`**: line-item sales split by menu **`categoryType`** (no SC/VAT). Frontend sends on pay; backend should **persist** and return on **`GET /api/analytics/transactions/{paymentId}`**. See **`docs/FRONTEND_REPORT_FOOD_DRINK.md`**.  
+> Line items in analytics should include **`menuItemId`** and **`categoryType`** when possible (see same doc).
 
 **Response:**
 
@@ -1782,8 +1809,19 @@ Legacy payments without `orderId` may still populate **`splits[]`** from `splitG
     }
   ],
   "items": [
-    { "id": "item-1", "name": "Signature Cocktail", "qty": 2, "unitPrice": 28, "status": "Served" }
+    {
+      "id": "oi-abc",
+      "menuItemId": "menu-s1",
+      "categoryId": "cocktails",
+      "categoryType": "drink",
+      "name": "Signature Cocktail",
+      "qty": 2,
+      "unitPrice": 28,
+      "status": "Served"
+    }
   ],
+  "foodSubtotal": 0,
+  "drinkSubtotal": 56
   "receiptUrl": "/api/receipts/pay-001"
 }
 ```

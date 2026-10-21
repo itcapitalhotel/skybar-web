@@ -3,9 +3,14 @@
 import React, { useState } from 'react';
 import { X, CreditCard, Banknote, QrCode, BedDouble, CheckCircle2, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
-import { paymentsApi } from '@/lib/api/client';
+import { menuApi, menuCategoryApi, paymentsApi } from '@/lib/api/client';
 import { getAuthUser } from '@/lib/api/config';
 import type { PaymentMethod } from '@/lib/api/types';
+import {
+  aggregateSalesFromLineItems,
+  buildMenuCategoryLookup,
+  type ReportLineItemLike,
+} from '@/app/reports/reportDocumentHelpers';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -16,6 +21,8 @@ interface PaymentModalProps {
   vat?: number;
   tableId: string;
   guestCount?: number;
+  /** Open check lines — used to compute food/drink subtotals on pay (optional) */
+  orderLineItems?: ReportLineItemLike[];
   onPaymentComplete?: () => void;
 }
 
@@ -30,6 +37,7 @@ export default function PaymentModal({
   vat,
   tableId,
   guestCount = 1,
+  orderLineItems,
   onPaymentComplete,
 }: PaymentModalProps) {
   const [method, setMethod] = useState<PayMethod>('card');
@@ -50,6 +58,25 @@ export default function PaymentModal({
       const authUser = getAuthUser();
       const staffId = authUser?.id;
 
+      let foodSubtotal: number | undefined;
+      let drinkSubtotal: number | undefined;
+      if (orderLineItems?.length) {
+        try {
+          const [categories, menuItems] = await Promise.all([
+            menuCategoryApi.list(),
+            menuApi.list(),
+          ]);
+          const lookup = buildMenuCategoryLookup(categories, menuItems);
+          const split = aggregateSalesFromLineItems(orderLineItems, lookup);
+          if (split.food > 0 || split.drink > 0) {
+            foodSubtotal = split.food;
+            drinkSubtotal = split.drink;
+          }
+        } catch {
+          /* pay without category split if menu unavailable */
+        }
+      }
+
       const result = await paymentsApi.process({
         tableId,
         guestCount: Math.max(1, guestCount),
@@ -58,6 +85,8 @@ export default function PaymentModal({
         serviceCharge: resolvedService,
         vat: resolvedVat,
         total,
+        foodSubtotal,
+        drinkSubtotal,
         cashTendered: method === 'cash' ? parseFloat(cashTendered || '0') : null,
         roomNumber: method === 'room' ? roomNumber : null,
         discount: 0,

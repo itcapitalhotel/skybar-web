@@ -71,7 +71,10 @@ This document maps every frontend file to the API endpoints it calls. All paths 
 | `src/app/notifications/page.tsx` | Full `notificationsApi` |
 | `src/app/manager-dashboard/page.tsx` | `GET /dashboard/*` (via `dashboardApi.full()`) |
 | `src/app/analytics/page.tsx` | `GET /analytics/summary` |
+| `src/app/reports/page.tsx` | `GET /analytics/transactions`, `GET /analytics/transactions/{id}` — food/drink: `docs/FRONTEND_REPORT_FOOD_DRINK.md` |
 | `src/app/weekly-roster/page.tsx` | `GET /roster/shifts`, `GET /roster/availability`, `GET /zones` |
+| `src/app/menu-categories/page.tsx` | `GET/POST/PUT/DELETE /menu/categories` — **`categoryType` required on POST** — see `docs/FRONTEND_MENU_CATEGORY.md` |
+| `src/app/post-items/page.tsx` | `GET /menu`, `GET /menu/categories`, `POST/PUT/DELETE /menu`; inline category create via `POST /menu/categories` with `categoryType` |
 
 ### Real-Time (WebSocket)
 

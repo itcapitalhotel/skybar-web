@@ -1,5 +1,6 @@
 import { clearAuthToken, getApiBaseUrl, getAuthToken } from './config';
 import { mapMenuItems } from './mappers';
+import { normalizeCategoryType } from '@/lib/menuCategory';
 import { normalizeOrderDetailResponse } from './paymentDetailMapper';
 import type {
   LoginRequest, LoginResponse, ManagerPinVerifyRequest, ManagerPinVerifyResponse,
@@ -13,7 +14,7 @@ import type {
   StockItem, UpdateStockCountRequest, BulkStockUpdateRequest,
   StockHistoryEntry, StockReconcileRequest, StockReconcileResponse,
   KDSTicket, KDSStatus, TableOrder, AddOrderItemsRequest, AddOrderItemsResponse, VoidOrderItemRequest,
-  ApiMenuItem, MenuCategory, MenuItem, CreateMenuCategoryRequest,
+  ApiMenuItem, MenuCategory, MenuItem, CreateMenuCategoryRequest, UpdateMenuCategoryRequest,
   ProcessPaymentRequest, ProcessPaymentResponse, ReceiptResponse, SplitPaymentRequest, SplitPaymentResponse,
   ShiftSummary, OpenShiftRequest, CloseShiftRequest, CloseShiftResponse,
   HourlyRevenue, RecentTransaction, DrawerReconcileRequest, DrawerReconcileResponse,
@@ -267,14 +268,63 @@ export const kdsApi = {
   remove: (id: string) => del<{ message: string }>(`/kds/tickets/${id}`),
 };
 
+function mapMenuCategory(raw: Record<string, unknown>): MenuCategory {
+  const categoryType =
+    normalizeCategoryType(raw.categoryType)
+    ?? normalizeCategoryType(raw.type)
+    ?? 'drink';
+  return {
+    id: String(raw.id ?? ''),
+    label: String(raw.label ?? ''),
+    icon: String(raw.icon ?? '🍸'),
+    sortOrder: typeof raw.sortOrder === 'number' ? raw.sortOrder : undefined,
+    isActive: raw.isActive !== false,
+    categoryType,
+  };
+}
+
+/**
+ * Build POST/PUT body for menu categories.
+ * - Send only `categoryType` — never `type` (Jackson UpdateMenuCategoryRequest 500s on `type`).
+ * - Omit null/undefined (e.g. `"sortOrder": null` also 500s).
+ */
+function categoryBody(data: CreateMenuCategoryRequest | UpdateMenuCategoryRequest): Record<string, unknown> {
+  const raw = data as Record<string, unknown>;
+  const categoryType = normalizeCategoryType(raw.categoryType ?? raw.type);
+  const body: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (key === 'categoryType' || key === 'type') continue;
+    if (value === undefined || value === null) continue;
+    if (key === 'sortOrder' && typeof value === 'number' && Number.isNaN(value)) continue;
+    body[key] = value;
+  }
+  if (categoryType) {
+    body.categoryType = categoryType;
+  }
+  return body;
+}
+
 // ─── Menu ─────────────────────────────────────────────────────────────────────
 export const menuCategoryApi = {
-  list: () => get<MenuCategory[]>('/menu/categories'),
-  get: (id: string) => get<MenuCategory>(`/menu/categories/${id}`),
-  create: (data: CreateMenuCategoryRequest) =>
-    post<MenuCategory>('/menu/categories', data),
-  update: (id: string, data: Partial<CreateMenuCategoryRequest>) =>
-    put<MenuCategory>(`/menu/categories/${id}`, data),
+  list: async () => {
+    const rows = await get<Record<string, unknown>[]>('/menu/categories');
+    return rows.map(mapMenuCategory);
+  },
+  get: async (id: string) => {
+    const raw = await get<Record<string, unknown>>(`/menu/categories/${encodeURIComponent(id)}`);
+    return mapMenuCategory(raw);
+  },
+  create: async (data: CreateMenuCategoryRequest) => {
+    const raw = await post<Record<string, unknown>>('/menu/categories', categoryBody(data));
+    return mapMenuCategory(raw);
+  },
+  update: async (id: string, data: UpdateMenuCategoryRequest) => {
+    const raw = await put<Record<string, unknown>>(
+      `/menu/categories/${encodeURIComponent(id)}`,
+      categoryBody(data),
+    );
+    return mapMenuCategory(raw);
+  },
   delete: (id: string) => del<void>(`/menu/categories/${id}`),
   getPrinterMappings: () =>
     get<CategoryPrinterMapping[]>('/menu/category-printers/mappings'),
@@ -299,7 +349,7 @@ export const menuCategoryApi = {
 export const menuApi = {
   list: (categoryId?: string) =>
     get<ApiMenuItem[]>('/menu', categoryId ? { categoryId } : undefined),
-  categories: () => get<MenuCategory[]>('/menu/categories'),
+  categories: () => menuCategoryApi.list(),
   items: async (categoryId?: string): Promise<MenuItem[]> => {
     const items = await get<ApiMenuItem[]>('/menu', categoryId ? { categoryId } : undefined);
     const mapped = mapMenuItems(items);

@@ -1,5 +1,12 @@
 import { lineTotal } from '@/lib/receiptMoney';
-import type { AnalyticsTransactionDetail, OrderItem } from '@/lib/api/types';
+import { normalizeCategoryType } from '@/lib/menuCategory';
+import type {
+  AnalyticsTransactionDetail,
+  ApiMenuItem,
+  MenuCategory,
+  MenuCategoryType,
+  OrderItem,
+} from '@/lib/api/types';
 
 export function formatReportMoney(amount: number): string {
   const n = Number.isFinite(amount) ? amount : 0;
@@ -45,6 +52,139 @@ export interface FinancialTotals {
   vat: number;
   tips: number;
   grandTotal: number;
+}
+
+export interface CategoryTypeSalesTotals {
+  food: number;
+  drink: number;
+}
+
+export interface MenuCategoryLookup {
+  categoryTypeById: Record<string, MenuCategoryType>;
+  menuItemCategoryId: Record<string, string>;
+  /** menu catalog id → food | drink */
+  menuItemIdToType: Record<string, MenuCategoryType>;
+  /** normalized item name → food | drink */
+  menuNameToType: Record<string, MenuCategoryType>;
+}
+
+export function normalizeReportItemName(name: string): string {
+  return name.replace(/\s*\([^)]*\)\s*$/u, '').trim().toLowerCase();
+}
+
+export function buildMenuCategoryLookup(
+  categories: MenuCategory[],
+  menuItems: ApiMenuItem[],
+): MenuCategoryLookup {
+  const categoryTypeById = Object.fromEntries(categories.map((c) => [c.id, c.categoryType]));
+  const categoryTypeByLabel = Object.fromEntries(
+    categories.map((c) => [c.label.trim().toLowerCase(), c.categoryType]),
+  );
+  const menuItemCategoryId: Record<string, string> = {};
+  const menuItemIdToType: Record<string, MenuCategoryType> = {};
+  const menuNameToType: Record<string, MenuCategoryType> = {};
+
+  for (const m of menuItems) {
+    menuItemCategoryId[m.id] = m.categoryId;
+    const catKey = m.categoryId || m.category || '';
+    let type =
+      categoryTypeById[catKey]
+      ?? categoryTypeByLabel[String(m.category ?? '').trim().toLowerCase()];
+    if (type) {
+      menuItemIdToType[m.id] = type;
+      menuNameToType[normalizeReportItemName(m.name)] = type;
+    }
+  }
+
+  return { categoryTypeById, menuItemCategoryId, menuItemIdToType, menuNameToType };
+}
+
+export interface ReportLineItemLike {
+  id?: string;
+  name: string;
+  qty: number;
+  unitPrice: number;
+  status?: string;
+  menuItemId?: string;
+  categoryId?: string;
+  categoryType?: MenuCategoryType;
+}
+
+function resolveLineCategoryType(
+  item: ReportLineItemLike,
+  lookup: MenuCategoryLookup,
+): MenuCategoryType | undefined {
+  const raw = item as unknown as Record<string, unknown>;
+  const fromApi = normalizeCategoryType(item.categoryType ?? raw.categoryType ?? raw.category_type);
+  if (fromApi) return fromApi;
+
+  const menuItemId = String(item.menuItemId ?? raw.menuItemId ?? raw.menu_item_id ?? '').trim();
+  if (menuItemId && lookup.menuItemIdToType[menuItemId]) {
+    return lookup.menuItemIdToType[menuItemId];
+  }
+
+  let categoryId = String(item.categoryId ?? raw.categoryId ?? raw.category_id ?? '').trim();
+  if (!categoryId && menuItemId) {
+    categoryId = lookup.menuItemCategoryId[menuItemId] ?? '';
+  }
+  if (categoryId && lookup.categoryTypeById[categoryId]) {
+    return lookup.categoryTypeById[categoryId];
+  }
+
+  return lookup.menuNameToType[normalizeReportItemName(item.name)];
+}
+
+/** Sum line-item sales (excludes voided) by food vs drink. */
+export function aggregateSalesFromLineItems(
+  items: ReportLineItemLike[],
+  lookup: MenuCategoryLookup | undefined,
+): CategoryTypeSalesTotals {
+  let food = 0;
+  let drink = 0;
+  if (!lookup) return { food, drink };
+
+  for (const item of items) {
+    if (item.status === 'Voided') continue;
+    const categoryType = resolveLineCategoryType(item, lookup);
+    const amount = lineTotal(item.qty ?? 1, item.unitPrice ?? 0);
+    if (categoryType === 'food') food += amount;
+    else if (categoryType === 'drink') drink += amount;
+  }
+
+  return { food, drink };
+}
+
+function paymentLevelCategorySales(detail: AnalyticsTransactionDetail): CategoryTypeSalesTotals {
+  const raw = detail as unknown as Record<string, unknown>;
+  const food = Number(raw.foodSubtotal ?? raw.food_subtotal ?? raw.foodSales ?? raw.food_sales ?? 0);
+  const drink = Number(raw.drinkSubtotal ?? raw.drink_subtotal ?? raw.drinkSales ?? raw.drink_sales ?? 0);
+  return {
+    food: Number.isFinite(food) ? food : 0,
+    drink: Number.isFinite(drink) ? drink : 0,
+  };
+}
+
+/** Sum line-item sales (excludes voided) by menu category type food vs drink. */
+export function aggregateSalesByCategoryType(
+  details: AnalyticsTransactionDetail[],
+  lookup: MenuCategoryLookup | undefined,
+): CategoryTypeSalesTotals {
+  let food = 0;
+  let drink = 0;
+
+  for (const d of details) {
+    const fromPayment = paymentLevelCategorySales(d);
+    if (fromPayment.food > 0 || fromPayment.drink > 0) {
+      food += fromPayment.food;
+      drink += fromPayment.drink;
+      continue;
+    }
+    const fromLines = aggregateSalesFromLineItems(orderItems(d), lookup);
+    food += fromLines.food;
+    drink += fromLines.drink;
+  }
+
+  return { food, drink };
 }
 
 export function aggregateFinancials(details: AnalyticsTransactionDetail[]): FinancialTotals {
@@ -211,6 +351,7 @@ export function buildShopReportCsv(
   dateFrom: string,
   dateTo: string,
   generatedAt: Date,
+  menuLookup?: MenuCategoryLookup,
 ): string {
   const lines: string[] = [];
   const financial = aggregateFinancials(orderDetails);
@@ -236,6 +377,9 @@ export function buildShopReportCsv(
   lines.push(csvRow(['Summary']));
   lines.push(csvRow(['Total Orders', totalOrders]));
   lines.push(csvRow(['Total Guests', totalGuests]));
+  const categorySales = aggregateSalesByCategoryType(orderDetails, menuLookup);
+  lines.push(csvRow(['Total Food Sales', moneyCsv(categorySales.food)]));
+  lines.push(csvRow(['Total Drink Sales', moneyCsv(categorySales.drink)]));
   lines.push('');
 
   lines.push(csvRow(['Financial Summary']));

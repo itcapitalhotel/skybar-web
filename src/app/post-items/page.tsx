@@ -8,8 +8,13 @@ import {
   UtensilsCrossed, Plus, Search, Edit2, Trash2, X, CheckCircle2,
   Star, Eye, EyeOff, RefreshCw, Tag, Layers,
 } from 'lucide-react';
-import { menuApi } from '@/lib/api/client';
-import type { ApiMenuItem, MenuCategory, MenuItemSize } from '@/lib/api/types';
+import { menuApi, menuCategoryApi } from '@/lib/api/client';
+import type { ApiMenuItem, MenuCategory, MenuCategoryType, MenuItemSize } from '@/lib/api/types';
+import {
+  MENU_CATEGORY_TYPE_OPTIONS,
+  categoryTypeBadgeClass,
+  categoryTypeLabel,
+} from '@/lib/menuCategory';
 import { toast } from 'sonner';
 
 interface SizeRow {
@@ -94,6 +99,10 @@ export default function PostItemsPage() {
   const [form, setForm] = useState<ItemFormData>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [quickCategoryOpen, setQuickCategoryOpen] = useState(false);
+  const [quickCategoryLabel, setQuickCategoryLabel] = useState('');
+  const [quickCategoryType, setQuickCategoryType] = useState<MenuCategoryType>('drink');
+  const [quickCategorySaving, setQuickCategorySaving] = useState(false);
 
   const fetchMenu = useCallback(async () => {
     setLoading(true);
@@ -103,7 +112,9 @@ export default function PostItemsPage() {
         menuApi.categories(),
       ]);
       setItems(menuData);
-      setCategories(categoryData.filter((c) => c.isActive !== false));
+      setCategories(
+        categoryData.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
+      );
     } catch {
       setItems([]);
       setCategories([]);
@@ -124,14 +135,24 @@ export default function PostItemsPage() {
     popular: items.filter((i) => i.popular).length,
   }), [items]);
 
+  const activeCategories = useMemo(
+    () => categories.filter((c) => c.isActive !== false),
+    [categories],
+  );
+
   const labelById = useMemo(
     () => Object.fromEntries(categories.map((c) => [c.id, c.label])),
     [categories],
   );
 
-  const categoryTabs = useMemo(
-    () => [{ id: 'All', label: 'All' }, ...categories.map((c) => ({ id: c.id, label: c.label }))],
+  const typeById = useMemo(
+    () => Object.fromEntries(categories.map((c) => [c.id, c.categoryType])),
     [categories],
+  );
+
+  const categoryTabs = useMemo(
+    () => [{ id: 'All', label: 'All' }, ...activeCategories.map((c) => ({ id: c.id, label: c.label }))],
+    [activeCategories],
   );
 
   const filtered = items.filter((item) => {
@@ -150,7 +171,7 @@ export default function PostItemsPage() {
     setEditingItem(null);
     setForm({
       ...EMPTY_FORM,
-      categoryId: categories[0]?.id ?? '',
+      categoryId: activeCategories[0]?.id ?? '',
       sizes: [newSizeRow('Single', ''), newSizeRow('Double', '')],
     });
     setDrawerOpen(true);
@@ -169,6 +190,34 @@ export default function PostItemsPage() {
       ),
     });
     setDrawerOpen(true);
+  };
+
+  const handleQuickCategoryCreate = async () => {
+    const label = quickCategoryLabel.trim();
+    if (!label) {
+      toast.error('Category label is required');
+      return;
+    }
+    setQuickCategorySaving(true);
+    try {
+      const created = await menuCategoryApi.create({
+        label,
+        categoryType: quickCategoryType,
+        icon: quickCategoryType === 'food' ? '🍽️' : '🍸',
+        isActive: true,
+      });
+      setCategories((prev) =>
+        [...prev, created].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
+      );
+      setForm((p) => ({ ...p, categoryId: created.id }));
+      setQuickCategoryLabel('');
+      setQuickCategoryOpen(false);
+      toast.success(`Category "${created.label}" created`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create category');
+    } finally {
+      setQuickCategorySaving(false);
+    }
   };
 
   const handleSave = async () => {
@@ -380,6 +429,11 @@ export default function PostItemsPage() {
                         <Tag size={9} />
                         {labelById[item.categoryId] ?? item.category}
                       </span>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${categoryTypeBadgeClass(typeById[item.categoryId])}`}
+                      >
+                        {categoryTypeLabel(typeById[item.categoryId])}
+                      </span>
                       {item.popular && (
                         <span className="inline-flex items-center gap-0.5 text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/25">
                           <Star size={9} /> Popular
@@ -490,24 +544,74 @@ export default function PostItemsPage() {
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">Category *</label>
-                  {categories.length === 0 ? (
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <label className="text-xs font-medium text-muted-foreground">Category *</label>
+                    <button
+                      type="button"
+                      onClick={() => setQuickCategoryOpen((v) => !v)}
+                      className="text-[10px] font-semibold text-primary hover:text-primary/80"
+                    >
+                      {quickCategoryOpen ? 'Cancel new category' : '+ New category'}
+                    </button>
+                  </div>
+                  {activeCategories.length === 0 && !quickCategoryOpen ? (
                     <p className="text-xs text-amber-400 mb-2">
-                      No categories yet.{' '}
+                      No categories yet — add one below or on{' '}
                       <Link href="/menu-categories" className="underline hover:text-amber-300">
-                        Create categories first
+                        Categories
                       </Link>
+                      .
                     </p>
                   ) : null}
+                  {quickCategoryOpen && (
+                    <div className="mb-3 p-3 rounded-xl border border-primary/25 bg-primary/5 space-y-3">
+                      <p className="text-[10px] text-muted-foreground">
+                        POST /api/menu/categories — <strong className="text-foreground">categoryType</strong> is required.
+                      </p>
+                      <input
+                        value={quickCategoryLabel}
+                        onChange={(e) => setQuickCategoryLabel(e.target.value)}
+                        placeholder="Category label (e.g. Cocktails)"
+                        className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
+                      />
+                      <div>
+                        <span className="text-[10px] text-muted-foreground block mb-1.5">Category type *</span>
+                        <div className="grid grid-cols-2 gap-2">
+                          {MENU_CATEGORY_TYPE_OPTIONS.map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => setQuickCategoryType(opt.value)}
+                              className={`px-2 py-2 rounded-lg text-[10px] font-semibold border ${
+                                quickCategoryType === opt.value
+                                  ? categoryTypeBadgeClass(opt.value)
+                                  : 'border-border text-muted-foreground'
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={quickCategorySaving}
+                        onClick={() => void handleQuickCategoryCreate()}
+                        className="w-full py-2 rounded-lg bg-primary/20 border border-primary/40 text-primary text-xs font-semibold disabled:opacity-50"
+                      >
+                        {quickCategorySaving ? 'Creating…' : 'Create & select category'}
+                      </button>
+                    </div>
+                  )}
                   <select
                     value={form.categoryId}
                     onChange={(e) => setForm((p) => ({ ...p, categoryId: e.target.value }))}
                     className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary"
                   >
                     <option value="">Select category</option>
-                    {categories.map((cat) => (
+                    {activeCategories.map((cat) => (
                       <option key={cat.id} value={cat.id}>
-                        {cat.icon} {cat.label}
+                        {cat.icon} {cat.label} ({categoryTypeLabel(cat.categoryType)})
                       </option>
                     ))}
                   </select>

@@ -9,7 +9,12 @@ import {
   RefreshCw, Layers, Eye, EyeOff, UtensilsCrossed,
 } from 'lucide-react';
 import { menuCategoryApi } from '@/lib/api/client';
-import type { MenuCategory, CreateMenuCategoryRequest } from '@/lib/api/types';
+import type { MenuCategory, CreateMenuCategoryRequest, MenuCategoryType } from '@/lib/api/types';
+import {
+  MENU_CATEGORY_TYPE_OPTIONS,
+  categoryTypeBadgeClass,
+  categoryTypeLabel,
+} from '@/lib/menuCategory';
 import { toast } from 'sonner';
 
 const ICON_PRESETS = ['🍹', '🥃', '🍾', '🍺', '🍽️', '💨', '🍸', '🧃', '🍔', '☕'];
@@ -19,6 +24,7 @@ interface CategoryFormData {
   icon: string;
   sortOrder: string;
   isActive: boolean;
+  categoryType: MenuCategoryType;
 }
 
 const EMPTY_FORM: CategoryFormData = {
@@ -26,6 +32,7 @@ const EMPTY_FORM: CategoryFormData = {
   icon: '🍸',
   sortOrder: '',
   isActive: true,
+  categoryType: 'drink',
 };
 
 export default function MenuCategoriesPage() {
@@ -83,6 +90,7 @@ export default function MenuCategoriesPage() {
       icon: cat.icon || '🍸',
       sortOrder: cat.sortOrder != null ? String(cat.sortOrder) : '',
       isActive: cat.isActive !== false,
+      categoryType: cat.categoryType ?? 'drink',
     });
     setDrawerOpen(true);
   };
@@ -92,18 +100,26 @@ export default function MenuCategoriesPage() {
       toast.error('Category label is required');
       return;
     }
-
-    const sortOrder = form.sortOrder.trim() ? parseInt(form.sortOrder, 10) : undefined;
-    if (form.sortOrder.trim() && Number.isNaN(sortOrder)) {
-      toast.error('Sort order must be a number');
+    if (!form.categoryType) {
+      toast.error('Category type is required (Food or Drink)');
       return;
+    }
+
+    let sortOrder: number | undefined;
+    if (form.sortOrder.trim()) {
+      sortOrder = parseInt(form.sortOrder, 10);
+      if (Number.isNaN(sortOrder)) {
+        toast.error('Sort order must be a number');
+        return;
+      }
     }
 
     const payload: CreateMenuCategoryRequest = {
       label: form.label.trim(),
+      categoryType: form.categoryType,
       icon: form.icon || '🍸',
-      sortOrder,
       isActive: form.isActive,
+      ...(sortOrder !== undefined ? { sortOrder } : {}),
     };
 
     setSaving(true);
@@ -260,6 +276,11 @@ export default function MenuCategoriesPage() {
                     <div className="min-w-0">
                       <p className="font-semibold text-sm text-foreground truncate">{cat.label}</p>
                       <p className="text-[10px] text-muted-foreground font-mono">{cat.id}</p>
+                      <span
+                        className={`inline-block mt-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${categoryTypeBadgeClass(cat.categoryType)}`}
+                      >
+                        {categoryTypeLabel(cat.categoryType, 'long')}
+                      </span>
                     </div>
                   </div>
                   {cat.isActive === false && (
@@ -348,6 +369,29 @@ export default function MenuCategoriesPage() {
                     className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary"
                     placeholder="Cocktails"
                   />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">Category type *</label>
+                  <p className="text-[10px] text-muted-foreground mb-2">
+                    Required on create — routes items to kitchen (food) or bar (drink).
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {MENU_CATEGORY_TYPE_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setForm((p) => ({ ...p, categoryType: opt.value }))}
+                        className={`px-3 py-2.5 rounded-lg text-xs font-semibold border transition-all ${
+                          form.categoryType === opt.value
+                            ? categoryTypeBadgeClass(opt.value)
+                            : 'border-border text-muted-foreground hover:border-primary/40'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div>

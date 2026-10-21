@@ -364,6 +364,7 @@ export default function FloorMapClient() {
           name: i.name,
           qty: i.qty,
           unitPrice: i.unitPrice,
+          categoryId: i.categoryId,
           size: i.size,
           notes: i.notes,
         })),
@@ -834,6 +835,16 @@ export default function FloorMapClient() {
             total={currentTotal}
             tableId={selectedTable.id}
             guestCount={Math.max(1, selectedTable.guests ?? 1)}
+            orderLineItems={currentItems
+              .filter((i) => i.status !== 'Voided')
+              .map((i) => ({
+                id: i.id,
+                menuItemId: i.menuItemId,
+                name: i.name,
+                qty: i.qty,
+                unitPrice: i.unitPrice,
+                status: i.status,
+              }))}
           />
           <SplitBillModal
             isOpen={splitOpen}

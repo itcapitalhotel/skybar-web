@@ -213,6 +213,8 @@ export function normalizeOrderDetailResponse(raw: Record<string, unknown>): Anal
     subtotal: num(raw.subtotal),
     serviceCharge: num(raw.serviceCharge ?? raw.service_charge),
     vat: num(raw.vat),
+    foodSubtotal: num(raw.foodSubtotal ?? raw.food_subtotal ?? raw.foodSales ?? raw.food_sales),
+    drinkSubtotal: num(raw.drinkSubtotal ?? raw.drink_subtotal ?? raw.drinkSales ?? raw.drink_sales),
     discount: num(raw.discount),
     guestCount: num(raw.guestCount ?? raw.guest_count),
     covers: num(raw.covers ?? raw.guestCount ?? raw.guest_count),

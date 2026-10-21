@@ -32,6 +32,7 @@ export interface OrderItem {
   id: string;
   /** Catalog menu item id — required when posting to API */
   menuItemId?: string;
+  categoryId?: string;
   name: string;
   qty: number;
   unitPrice: number;

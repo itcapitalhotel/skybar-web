@@ -319,6 +319,10 @@ export interface OrderItem {
   status: OrderItemStatus;
   notes?: string;
   size?: string;
+  /** Menu catalog id — not the same as order line `id` */
+  menuItemId?: string;
+  categoryId?: string;
+  categoryType?: MenuCategoryType;
 }
 
 export interface TableOrder {
@@ -339,6 +343,7 @@ export interface AddOrderItemsRequest {
     name: string;
     qty: number;
     unitPrice: number;
+    categoryId?: string;
     size?: string;
     notes?: string;
   }>;
@@ -427,21 +432,30 @@ export interface ApiMenuItem {
   available?: boolean;
 }
 
+export type MenuCategoryType = 'food' | 'drink';
+
 export interface MenuCategory {
   id: string;
   label: string;
   icon: string;
   sortOrder?: number;
   isActive?: boolean;
+  categoryType: MenuCategoryType;
 }
 
 export interface CreateMenuCategoryRequest {
   id?: string;
   label: string;
+  /** Required on POST */
+  categoryType: MenuCategoryType;
   icon?: string;
   sortOrder?: number;
   isActive?: boolean;
 }
+
+export type UpdateMenuCategoryRequest = Partial<Omit<CreateMenuCategoryRequest, 'categoryType'>> & {
+  categoryType?: MenuCategoryType;
+};
 
 export interface MenuItem {
   id: string;
@@ -467,6 +481,9 @@ export interface ProcessPaymentRequest {
   serviceCharge: number;
   vat: number;
   total: number;
+  /** Line-item sales subtotals by category type (excludes SC/VAT) — optional, for reports */
+  foodSubtotal?: number;
+  drinkSubtotal?: number;
   cashTendered?: number | null;
   roomNumber?: string | null;
   discount?: number;
@@ -766,6 +783,8 @@ export interface AnalyticsTransaction {
   staffId: string;
   staffName: string;
   items?: number;
+  foodSubtotal?: number;
+  drinkSubtotal?: number;
 }
 
 export interface AnalyticsTransactionSplitPart {
@@ -875,6 +894,9 @@ export interface AnalyticsTransactionDetail {
   splits?: OrderSplitSession[];
   transfers?: OrderTransferRecord[];
   items?: OrderItem[];
+  /** Persisted at pay time — preferred for food/drink report when line items lack menu ids */
+  foodSubtotal?: number;
+  drinkSubtotal?: number;
   payments?: OrderDetailsPayment[];
   receiptUrl?: string;
 }

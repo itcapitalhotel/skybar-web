@@ -229,6 +229,7 @@ export default function MenuOverlay({
       return {
         id: `item-${stamp}-${idx}`,
         menuItemId: c.menuItem.id,
+        categoryId: c.menuItem.categoryId,
         name: c.menuItem.name,
         qty: c.qty,
         unitPrice,

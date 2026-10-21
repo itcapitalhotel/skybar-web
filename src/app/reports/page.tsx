@@ -9,9 +9,10 @@ import {
 } from 'lucide-react';
 import OrderDetailModal from '@/app/reports/OrderDetailModal';
 import SkyBarShopReport from '@/app/reports/SkyBarShopReport';
-import { buildShopReportCsv } from '@/app/reports/reportDocumentHelpers';
+import { buildMenuCategoryLookup, buildShopReportCsv } from '@/app/reports/reportDocumentHelpers';
 import DateRangePicker, { todayRange } from '@/components/DateRangePicker';
-import { analyticsApi } from '@/lib/api/client';
+import { analyticsApi, menuApi, menuCategoryApi } from '@/lib/api/client';
+import type { MenuCategoryLookup } from '@/app/reports/reportDocumentHelpers';
 import {
   ensureStaffNameCache,
   finalizeStaffDisplay,
@@ -42,6 +43,8 @@ interface OrderReportRow {
   staff: string;
   method: string;
   amount: number;
+  foodSubtotal?: number;
+  drinkSubtotal?: number;
 }
 
 type SortKey = 'name' | 'revenue' | 'orders' | 'covers';
@@ -92,6 +95,10 @@ function normalizeOrderRow(tx: AnalyticsTransaction): OrderReportRow {
   const openedAtIso = String(tx.openedAt ?? raw.opened_at ?? '');
   const paymentId = String(tx.paymentId ?? raw.payment_id ?? tx.id ?? '').trim();
   const orderId = String(tx.orderId ?? raw.order_id ?? '').trim() || undefined;
+  const foodRaw = raw.foodSubtotal ?? raw.food_subtotal;
+  const drinkRaw = raw.drinkSubtotal ?? raw.drink_subtotal;
+  const foodSubtotal = foodRaw != null ? Number(foodRaw) : tx.foodSubtotal;
+  const drinkSubtotal = drinkRaw != null ? Number(drinkRaw) : tx.drinkSubtotal;
   return {
     id: paymentId || tx.id,
     paymentId: paymentId || tx.id,
@@ -103,6 +110,8 @@ function normalizeOrderRow(tx: AnalyticsTransaction): OrderReportRow {
     staff,
     method: tx.method,
     amount: Number(tx.amount ?? 0),
+    foodSubtotal: Number.isFinite(foodSubtotal) ? foodSubtotal : undefined,
+    drinkSubtotal: Number.isFinite(drinkSubtotal) ? drinkSubtotal : undefined,
   };
 }
 
@@ -122,6 +131,7 @@ export default function ReportsPage() {
   const [staffRows, setStaffRows] = useState<StaffReportRow[]>([]);
   const [orderRows, setOrderRows] = useState<OrderReportRow[]>([]);
   const [orderDetails, setOrderDetails] = useState<AnalyticsTransactionDetail[]>([]);
+  const [menuLookup, setMenuLookup] = useState<MenuCategoryLookup | undefined>(undefined);
   const [reportGeneratedAt, setReportGeneratedAt] = useState(() => new Date());
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [detailRow, setDetailRow] = useState<OrderReportRow | null>(null);
@@ -165,6 +175,16 @@ export default function ReportsPage() {
       setOrderRows(orders);
       setReportGeneratedAt(new Date());
 
+      try {
+        const [categories, menuItems] = await Promise.all([
+          menuCategoryApi.list(),
+          menuApi.list(),
+        ]);
+        setMenuLookup(buildMenuCategoryLookup(categories, menuItems));
+      } catch {
+        setMenuLookup(undefined);
+      }
+
       setLoadingDetails(true);
       const details = await Promise.all(
         orders.map(async (o) => {
@@ -179,6 +199,8 @@ export default function ReportsPage() {
               method: o.method,
               amount: o.amount,
               total: o.amount,
+              foodSubtotal: o.foodSubtotal,
+              drinkSubtotal: o.drinkSubtotal,
               openedAt: o.openedAt,
               closedAt: o.closedAtIso,
               time: o.closedAtIso,
@@ -195,6 +217,7 @@ export default function ReportsPage() {
       setStaffRows([]);
       setOrderRows([]);
       setOrderDetails([]);
+      setMenuLookup(undefined);
       setLoadingDetails(false);
     } finally {
       setLoading(false);
@@ -241,7 +264,7 @@ export default function ReportsPage() {
   };
 
   const handleExcel = () => {
-    const csv = buildShopReportCsv(filteredOrderDetails, dateFrom, dateTo, reportGeneratedAt);
+    const csv = buildShopReportCsv(filteredOrderDetails, dateFrom, dateTo, reportGeneratedAt, menuLookup);
     const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -332,6 +355,7 @@ export default function ReportsPage() {
           dateTo={dateTo}
           generatedAt={reportGeneratedAt}
           orderDetails={filteredOrderDetails}
+          menuLookup={menuLookup}
           loading={loading || loadingDetails}
           onViewOrder={(paymentId) => {
             const row = orderRows.find((o) => o.paymentId === paymentId);
