@@ -508,10 +508,14 @@ export default function FloorMapClient() {
 
     try {
       await tablesApi.update(tableId, { shape });
+      setSelectedTable((prev) => (prev?.id === tableId ? { ...prev, shape } : prev));
       toast.success('Table shape saved');
     } catch {
       if (previous) {
         setTables((prev) => prev.map((t) => (t.id === tableId ? { ...t, shape: previous.shape } : t)));
+        setSelectedTable((prev) =>
+          prev?.id === tableId ? { ...prev, shape: previous.shape } : prev,
+        );
       }
       toast.error('Failed to save table shape');
       throw new Error('Failed to save table shape');
@@ -770,6 +774,7 @@ export default function FloorMapClient() {
                   saving={editTableSaving}
                   onRename={handleRenameTable}
                   onDelete={handleDeleteTable}
+                  onChangeShape={handleChangeShape}
                 />
               ) : (
                 <OrderPanel

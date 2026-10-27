@@ -4,8 +4,10 @@ import React, { useState } from 'react';
 import { X, Plus } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
-import { tablesApi } from '@/lib/api/client';
+import { tablesApi, zonesApi } from '@/lib/api/client';
 import type { TableShape } from '@/lib/api/types';
+import TableShapePicker from './TableShapePicker';
+import type { TableShape as FloorTableShape } from './floorData';
 
 interface NewTableDrawerProps {
   isOpen: boolean;
@@ -18,14 +20,32 @@ interface TableFormData {
   capacity: number;
   zone: string;
   minSpend: string;
-  shape: 'circle' | 'rect' | 'cabana';
+  shape: FloorTableShape;
 }
 
 export default function NewTableDrawer({ isOpen, onClose, onTableAdded }: NewTableDrawerProps) {
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<TableFormData>({
-    defaultValues: { zone: 'bar', shape: 'rect', capacity: 4 }
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<TableFormData>({
+    defaultValues: { zone: 'bar', shape: 'rect', capacity: 4 },
   });
   const [loading, setLoading] = useState(false);
+  const [zones, setZones] = useState<{ id: string; label: string }[]>([]);
+  const selectedShape = watch('shape');
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    zonesApi.list()
+      .then((list) =>
+        setZones(list.filter((z) => z.isActive).map((z) => ({ id: z.id.toLowerCase(), label: z.label }))),
+      )
+      .catch(() =>
+        setZones([
+          { id: 'vip', label: 'VIP Edge Skyline' },
+          { id: 'bar', label: 'Main Bar' },
+          { id: 'terrace', label: 'Outdoor Terrace' },
+          { id: 'cabana', label: 'Cabana Deck' },
+        ]),
+      );
+  }, [isOpen]);
 
   const onSubmit = async (data: TableFormData) => {
     setLoading(true);
@@ -94,28 +114,21 @@ export default function NewTableDrawer({ isOpen, onClose, onTableAdded }: NewTab
                 {...register('zone', { required: true })}
                 className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-foreground text-sm focus:outline-none focus:border-primary transition-colors"
               >
-                <option value="vip">VIP Edge Skyline</option>
-                <option value="bar">Main Bar</option>
-                <option value="terrace">Outdoor Terrace</option>
-                <option value="cabana">Cabana Deck</option>
+                {(zones.length ? zones : [{ id: 'bar', label: 'Main Bar' }]).map((z) => (
+                  <option key={z.id} value={z.id}>
+                    {z.label}
+                  </option>
+                ))}
               </select>
             </div>
 
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1.5">Table Shape</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['rect', 'circle', 'cabana'] as const).map(s => (
-                  <label key={`shape-${s}`} className="cursor-pointer">
-                    <input type="radio" value={s} {...register('shape')} className="sr-only" />
-                    <div className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl border border-border hover:border-primary/50 transition-all text-xs text-muted-foreground">
-                      <div className={`bg-muted/50 border border-border ${
-                        s === 'circle' ? 'w-8 h-8 rounded-full' : s === 'cabana' ? 'w-10 h-6 rounded-xl' : 'w-10 h-6 rounded-md'
-                      }`} />
-                      {s.charAt(0).toUpperCase() + s.slice(1)}
-                    </div>
-                  </label>
-                ))}
-              </div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">Table shape</label>
+              <TableShapePicker
+                value={selectedShape}
+                onChange={(shape) => setValue('shape', shape, { shouldValidate: true })}
+                disabled={loading}
+              />
             </div>
 
             <div>

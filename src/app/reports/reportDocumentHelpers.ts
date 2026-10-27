@@ -253,6 +253,50 @@ function orderItems(detail: AnalyticsTransactionDetail): OrderItem[] {
   return [];
 }
 
+/** Same menu line (id or name+size+price) → one report row with summed qty. */
+function mergeLineItemsForReport(items: OrderItem[]): {
+  key: string;
+  itemName: string;
+  qty: number;
+  unitPrice: number;
+  itemTotal: number;
+}[] {
+  const map = new Map<
+    string,
+    { key: string; itemName: string; qty: number; unitPrice: number; itemTotal: number }
+  >();
+
+  for (const item of items) {
+    if (item.status === 'Voided') continue;
+    const raw = item as unknown as Record<string, unknown>;
+    const menuItemId = String(item.menuItemId ?? raw.menuItemId ?? raw.menu_item_id ?? '').trim();
+    const name = String(item.name ?? '').trim();
+    const size = String(item.size ?? '').trim();
+    const unitPrice = Number(item.unitPrice ?? 0);
+    const displayName = size ? `${name} (${size})` : name;
+    const mergeKey = menuItemId
+      ? `mid:${menuItemId}|${unitPrice.toFixed(2)}`
+      : `lbl:${displayName.toLowerCase()}|${unitPrice.toFixed(2)}`;
+    const qty = item.qty ?? 1;
+    const addTotal = lineTotal(qty, unitPrice);
+    const prev = map.get(mergeKey);
+    if (prev) {
+      prev.qty += qty;
+      prev.itemTotal += addTotal;
+    } else {
+      map.set(mergeKey, {
+        key: mergeKey,
+        itemName: displayName,
+        qty,
+        unitPrice,
+        itemTotal: addTotal,
+      });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
 export function buildReportGridRows(details: AnalyticsTransactionDetail[]): ReportGridRow[] {
   const rows: ReportGridRow[] = [];
   for (const d of details) {
@@ -290,18 +334,30 @@ export function buildReportGridRows(details: AnalyticsTransactionDetail[]): Repo
       continue;
     }
 
-    items.forEach((item, idx) => {
-      const qty = item.qty ?? 1;
-      const unitPrice = item.unitPrice ?? 0;
-      const itemTotal = lineTotal(qty, unitPrice);
-      const isLast = idx === items.length - 1;
+    const mergedLines = mergeLineItemsForReport(items);
+    if (mergedLines.length === 0) {
       rows.push({
-        key: `${d.paymentId}-${item.id || idx}`,
+        key: `${d.paymentId}-summary`,
         ...base,
-        itemName: item.size ? `${item.name} (${item.size})` : item.name,
-        qty,
-        unitPrice,
-        itemTotal,
+        itemName: items.some((i) => i.status === 'Voided')
+          ? '(All items voided)'
+          : '(No billable line items)',
+        qty: 0,
+        unitPrice: 0,
+        itemTotal: 0,
+        isOrderSummaryOnly: true,
+      });
+      continue;
+    }
+    mergedLines.forEach((line, idx) => {
+      const isLast = idx === mergedLines.length - 1;
+      rows.push({
+        key: `${d.paymentId}-${line.key}`,
+        ...base,
+        itemName: line.itemName,
+        qty: line.qty,
+        unitPrice: line.unitPrice,
+        itemTotal: line.itemTotal,
         subtotal: isLast ? base.subtotal : 0,
         serviceCharge: isLast ? base.serviceCharge : 0,
         vat: isLast ? base.vat : 0,

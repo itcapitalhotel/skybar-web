@@ -2,13 +2,15 @@
 
 import React, { useEffect, useState } from 'react';
 import { Trash2, Save, AlertCircle } from 'lucide-react';
-import type { TableData } from './floorData';
+import type { TableData, TableShape } from './floorData';
+import TableShapePicker from './TableShapePicker';
 
 interface EditTablePanelProps {
   table: TableData | null;
   saving: boolean;
   onRename: (tableId: string, label: string) => Promise<void>;
   onDelete: (tableId: string) => Promise<void>;
+  onChangeShape: (tableId: string, shape: TableShape) => Promise<void>;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -18,14 +20,22 @@ const STATUS_LABELS: Record<string, string> = {
   bill: 'Bill ready',
 };
 
-export default function EditTablePanel({ table, saving, onRename, onDelete }: EditTablePanelProps) {
+export default function EditTablePanel({
+  table,
+  saving,
+  onRename,
+  onDelete,
+  onChangeShape,
+}: EditTablePanelProps) {
   const [label, setLabel] = useState('');
+  const [shape, setShape] = useState<TableShape>('rect');
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   useEffect(() => {
     setLabel(table?.label ?? '');
+    setShape(table?.shape ?? 'rect');
     setDeleteConfirm(false);
-  }, [table?.id, table?.label]);
+  }, [table?.id, table?.label, table?.shape]);
 
   if (!table) {
     return (
@@ -77,6 +87,20 @@ export default function EditTablePanel({ table, saving, onRename, onDelete }: Ed
         <Save size={14} />
         Save name
       </button>
+
+      <div>
+        <label className="text-xs font-medium text-muted-foreground block mb-1.5">Table shape</label>
+        <p className="text-[10px] text-muted-foreground mb-2">Updates the floor plan icon immediately.</p>
+        <TableShapePicker
+          value={shape}
+          disabled={saving}
+          onChange={(next) => {
+            if (!table || next === shape) return;
+            setShape(next);
+            void onChangeShape(table.id, next);
+          }}
+        />
+      </div>
 
       <div className="pt-2 border-t border-border">
         {!canDelete && (
