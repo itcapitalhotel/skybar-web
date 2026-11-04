@@ -124,7 +124,25 @@ export default function ReceiptPreview({
               <span>VAT</span>
               <span className="tabular-nums">{formatMoney(data.vat, currencySymbol)}</span>
             </div>
-            {discount > 0 ? (
+            {(data.discountTotal ?? 0) > 0 ? (
+              <div className="flex justify-between gap-2 text-emerald-700">
+                <span>Discount total</span>
+                <span className="tabular-nums">−{formatMoney(data.discountTotal ?? 0, currencySymbol)}</span>
+              </div>
+            ) : null}
+            {(data.discountFood ?? 0) > 0 ? (
+              <div className="flex justify-between gap-2 text-emerald-700">
+                <span>Discount food</span>
+                <span className="tabular-nums">−{formatMoney(data.discountFood ?? 0, currencySymbol)}</span>
+              </div>
+            ) : null}
+            {(data.discountDrink ?? 0) > 0 ? (
+              <div className="flex justify-between gap-2 text-emerald-700">
+                <span>Discount drink</span>
+                <span className="tabular-nums">−{formatMoney(data.discountDrink ?? 0, currencySymbol)}</span>
+              </div>
+            ) : null}
+            {discount > 0 && !(data.discountTotal || data.discountFood || data.discountDrink) ? (
               <div className="flex justify-between gap-2 text-emerald-700">
                 <span>Discount</span>
                 <span className="tabular-nums">−{formatMoney(discount, currencySymbol)}</span>
@@ -134,6 +152,12 @@ export default function ReceiptPreview({
               <span>TOTAL</span>
               <span className="tabular-nums">{formatMoney(data.total, currencySymbol)}</span>
             </div>
+            {(data.tip ?? 0) > 0 ? (
+              <div className="flex justify-between gap-2 text-[11px]">
+                <span>Tip</span>
+                <span className="tabular-nums">{formatMoney(data.tip ?? 0, currencySymbol)}</span>
+              </div>
+            ) : null}
           </section>
 
           <section className="border-t border-dashed border-gray-400 pt-2 space-y-1 text-[10px] text-gray-700">

@@ -6,7 +6,9 @@ export const MENU_CATEGORY_TYPE_OPTIONS: { value: MenuCategoryType; label: strin
 ];
 
 export function normalizeCategoryType(raw: unknown): MenuCategoryType | undefined {
-  if (raw === 'food' || raw === 'drink') return raw;
+  if (typeof raw !== 'string') return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === 'food' || value === 'drink') return value;
   return undefined;
 }
 

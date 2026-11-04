@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ArrowLeftRight, Trash2, Tag, SplitSquareHorizontal, CreditCard, AlertTriangle, CheckCircle2, Clock, XCircle, Users, FileText } from 'lucide-react';
+import { ArrowLeftRight, Trash2, SplitSquareHorizontal, CreditCard, AlertTriangle, CheckCircle2, Clock, XCircle, Users, FileText, Minus, Plus, X } from 'lucide-react';
 import { TableData, OrderItem, calcOrderTotal } from './floorData';
 import type { UserRole } from '@/lib/api/types';
 import { toast } from 'sonner';
@@ -10,7 +10,8 @@ interface OrderPanelProps {
   table: TableData | null;
   items: OrderItem[];
   role: UserRole;
-  onVoidItem: (itemId: string) => void | Promise<void>;
+  onVoidItem: (itemId: string, reason: string) => void | Promise<void>;
+  onUpdateQty?: (itemId: string, qty: number) => void | Promise<void>;
   onOpenSplit: () => void;
   onOpenTransfer: () => void;
   onOpenPayment: () => void;
@@ -42,14 +43,16 @@ export default function OrderPanel({
   items,
   role,
   onVoidItem,
+  onUpdateQty,
   onOpenSplit,
   onOpenTransfer,
   onOpenPayment,
   onRequestManagerPin,
   onClearTable,
 }: OrderPanelProps) {
-  const [discountPct, setDiscountPct] = useState(0);
-  const [discountOpen, setDiscountOpen] = useState(false);
+  const [voidTarget, setVoidTarget] = useState<OrderItem | null>(null);
+  const [voidReason, setVoidReason] = useState('');
+  const [voiding, setVoiding] = useState(false);
 
   if (!table) {
     return (
@@ -67,44 +70,44 @@ export default function OrderPanel({
   const subtotal = calcOrderTotal(items);
   const serviceCharge = subtotal * 0.10;
   const vat = (subtotal + serviceCharge) * 0.10;
-  const discountAmt = (subtotal + serviceCharge) * (discountPct / 100);
-  const total = subtotal + serviceCharge + vat - discountAmt;
+  const total = subtotal + serviceCharge + vat;
   const minSpendGap = table.minSpend ? Math.max(0, table.minSpend - subtotal) : 0;
 
-  const canApplyDiscount = role === 'Admin' || role === 'Manager';
   const canSplit = role === 'Admin' || role === 'Manager' || role === 'Cashier';
   const canPay = role === 'Admin' || role === 'Manager' || role === 'Cashier';
-  const runVoid = async (itemId: string, withManagerApproval: boolean) => {
+
+  const closeVoidModal = () => {
+    if (voiding) return;
+    setVoidTarget(null);
+    setVoidReason('');
+  };
+
+  const runVoid = async (itemId: string, reason: string, withManagerApproval: boolean) => {
+    setVoiding(true);
     try {
-      await onVoidItem(itemId);
+      await onVoidItem(itemId, reason);
       toast.success(withManagerApproval ? 'Item removed (manager approved)' : 'Item removed');
+      setVoidTarget(null);
+      setVoidReason('');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to remove item');
+    } finally {
+      setVoiding(false);
     }
   };
 
-  const handleVoid = (itemId: string) => {
+  const submitVoid = () => {
+    if (!voidTarget || voiding) return;
+    const reason = voidReason.trim();
+    if (!reason) return;
+    const itemId = voidTarget.id;
     if (role === 'Bartender') {
       onRequestManagerPin('Void Item', () => {
-        void runVoid(itemId, true);
+        void runVoid(itemId, reason, true);
       });
-    } else {
-      void runVoid(itemId, false);
+      return;
     }
-  };
-
-  const handleDiscount = (pct: number) => {
-    if (!canApplyDiscount) {
-      onRequestManagerPin(`Apply ${pct}% Discount`, () => {
-        setDiscountPct(pct);
-        setDiscountOpen(false);
-        toast.success(`${pct}% discount applied`);
-      });
-    } else {
-      setDiscountPct(pct);
-      setDiscountOpen(false);
-      toast.success(`${pct}% discount applied`);
-    }
+    void runVoid(itemId, reason, false);
   };
 
   return (
@@ -185,7 +188,9 @@ export default function OrderPanel({
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-xs font-semibold text-muted-foreground text-tabular">{item.qty}x</span>
+                    {item.status === 'Voided' || !onUpdateQty ? (
+                      <span className="text-xs font-semibold text-muted-foreground text-tabular">{item.qty}x</span>
+                    ) : null}
                     <span className="text-xs font-medium text-foreground truncate">{item.name}</span>
                     {item.size ? (
                       <span className="text-[10px] font-medium text-primary/90 bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded-md">
@@ -202,12 +207,45 @@ export default function OrderPanel({
                   )}
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
+                  {item.status !== 'Voided' && onUpdateQty ? (
+                    <div className="flex items-center rounded-lg border border-border overflow-hidden">
+                      <button
+                        type="button"
+                        className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-40"
+                        disabled={item.qty <= 1}
+                        onClick={() => {
+                          void onUpdateQty(item.id, item.qty - 1).catch((err) => {
+                            toast.error(err instanceof Error ? err.message : 'Could not update quantity');
+                          });
+                        }}
+                        aria-label="Decrease quantity"
+                      >
+                        <Minus size={11} />
+                      </button>
+                      <span className="w-5 text-center text-[11px] font-semibold tabular-nums">{item.qty}</span>
+                      <button
+                        type="button"
+                        className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                        onClick={() => {
+                          void onUpdateQty(item.id, item.qty + 1).catch((err) => {
+                            toast.error(err instanceof Error ? err.message : 'Could not update quantity');
+                          });
+                        }}
+                        aria-label="Increase quantity"
+                      >
+                        <Plus size={11} />
+                      </button>
+                    </div>
+                  ) : null}
                   <span className="text-xs font-semibold text-foreground text-tabular">${(item.unitPrice * item.qty).toFixed(0)}</span>
                   {item.status !== 'Voided' && (
                     <button
-                      onClick={() => handleVoid(item.id)}
+                      onClick={() => {
+                        setVoidTarget(item);
+                        setVoidReason('');
+                      }}
                       className="w-6 h-6 rounded-lg flex items-center justify-center text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition-all"
-                      title="Void Item"
+                      title="Remove item"
                     >
                       <XCircle size={13} />
                     </button>
@@ -233,12 +271,6 @@ export default function OrderPanel({
           <span>VAT (10%)</span>
           <span className="text-tabular">${vat.toFixed(2)}</span>
         </div>
-        {discountPct > 0 && (
-          <div className="flex justify-between text-xs text-emerald-400">
-            <span>Discount ({discountPct}%)</span>
-            <span className="text-tabular">−${discountAmt.toFixed(2)}</span>
-          </div>
-        )}
         <div className="flex justify-between text-sm font-bold text-foreground pt-1.5 border-t border-border">
           <span>Total</span>
           <span className="text-tabular text-primary">${total.toFixed(2)}</span>
@@ -247,30 +279,7 @@ export default function OrderPanel({
 
       {/* Action Buttons */}
       <div className="px-3 pb-4 pt-2 space-y-2">
-        <div className="grid grid-cols-2 gap-1.5">
-          <div className="relative">
-            <button
-              onClick={() => setDiscountOpen(v => !v)}
-              className="w-full flex flex-col items-center gap-1 py-2 px-1 rounded-xl bg-muted/50 border border-border text-muted-foreground hover:text-foreground hover:border-amber-500/40 transition-all text-[10px] font-medium"
-            >
-              <Tag size={14} />
-              Discount
-            </button>
-            {discountOpen && (
-              <div className="absolute bottom-full mb-1 left-0 w-36 glass-card-elevated rounded-xl border border-border shadow-2xl z-20 fade-in overflow-hidden">
-                {[5, 10, 15, 20, 25].map(pct => (
-                  <button
-                    key={`disc-${pct}`}
-                    onClick={() => handleDiscount(pct)}
-                    className="w-full px-3 py-2 text-xs text-left text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all flex justify-between"
-                  >
-                    <span>{pct}% Off</span>
-                    <span className="text-emerald-400">−${((subtotal + serviceCharge) * pct / 100).toFixed(0)}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+        <div className="grid grid-cols-1 gap-1.5">
           {canSplit && (
             <button
               onClick={onOpenSplit}
@@ -294,6 +303,77 @@ export default function OrderPanel({
           </button>
         )}
       </div>
+
+      {voidTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="modal-overlay absolute inset-0" onClick={closeVoidModal} />
+          <form
+            className="relative w-full max-w-sm glass-card-elevated rounded-2xl border border-border p-5 fade-in"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitVoid();
+            }}
+          >
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Remove item</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {voidTarget.qty}× {voidTarget.name}{voidTarget.size ? ` · ${voidTarget.size}` : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeVoidModal}
+                className="p-1 rounded-lg text-muted-foreground hover:text-foreground"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5" htmlFor="void-reason">
+              Reason
+            </label>
+            <textarea
+              id="void-reason"
+              autoFocus
+              rows={3}
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder="Why is this item being removed?"
+              className="field-input w-full resize-none"
+            />
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {['Guest changed mind', 'Wrong item', 'Item cancelled by guest'].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setVoidReason(preset)}
+                  className="px-2 py-1 rounded-lg border border-border bg-muted/40 text-[10px] text-muted-foreground hover:text-foreground hover:border-primary/40"
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                onClick={closeVoidModal}
+                disabled={voiding}
+                className="flex-1 py-2.5 rounded-xl border border-border text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={voiding || !voidReason.trim()}
+                className="flex-1 py-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 text-xs font-semibold hover:bg-rose-500/25 disabled:opacity-40"
+              >
+                {voiding ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

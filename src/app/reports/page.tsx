@@ -45,6 +45,8 @@ interface OrderReportRow {
   amount: number;
   foodSubtotal?: number;
   drinkSubtotal?: number;
+  cardName?: string | null;
+  cardNumber?: string | null;
 }
 
 type SortKey = 'name' | 'revenue' | 'orders' | 'covers';
@@ -112,6 +114,8 @@ function normalizeOrderRow(tx: AnalyticsTransaction): OrderReportRow {
     amount: Number(tx.amount ?? 0),
     foodSubtotal: Number.isFinite(foodSubtotal) ? foodSubtotal : undefined,
     drinkSubtotal: Number.isFinite(drinkSubtotal) ? drinkSubtotal : undefined,
+    cardName: (tx.cardName ?? raw.card_name ?? null) as string | null,
+    cardNumber: (tx.cardNumber ?? raw.card_number ?? null) as string | null,
   };
 }
 
@@ -205,6 +209,8 @@ export default function ReportsPage() {
               closedAt: o.closedAtIso,
               time: o.closedAtIso,
               staffName: o.staff,
+              cardName: o.cardName,
+              cardNumber: o.cardNumber,
               items: [],
             } satisfies AnalyticsTransactionDetail;
           }
@@ -346,7 +352,7 @@ export default function ReportsPage() {
         {fetchError && (
           <div className="flex items-center gap-3 p-4 rounded-xl bg-rose-500/10 border border-rose-500/25">
             <AlertCircle size={18} className="text-rose-400 shrink-0" />
-            <p className="text-sm text-rose-400">Could not load report data. Check backend is running on port 8080.</p>
+            <p className="text-sm text-rose-400">Could not load report data. Please try again or contact support.</p>
           </div>
         )}
 
@@ -439,6 +445,8 @@ export default function ReportsPage() {
             time: detailRow.closedAt,
             staff: detailRow.staff,
             tableLabel: detailRow.tableLabel,
+            cardName: detailRow.cardName,
+            cardNumber: detailRow.cardNumber,
           }}
           onClose={() => setDetailRow(null)}
         />

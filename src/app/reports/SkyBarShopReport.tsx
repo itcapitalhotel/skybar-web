@@ -17,6 +17,8 @@ import {
 const th =
   'border border-gray-300 bg-gray-50 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-gray-600 whitespace-nowrap';
 const td = 'border border-gray-300 px-3 py-2 text-[11px] text-gray-800 align-middle';
+/** Wide enough that a typical item name wraps once, never more than two lines. */
+const itemCol = 'min-w-[17rem] w-[20rem] max-w-[20rem]';
 const tdNum = `${td} text-right tabular-nums whitespace-nowrap font-medium text-gray-900`;
 
 const sectionTitle =
@@ -125,7 +127,7 @@ export default function SkyBarShopReport({
         </div>
       </header>
 
-      <div className="px-8 py-6 space-y-8 max-h-[calc(100vh-11rem)] overflow-y-auto overflow-x-hidden print:max-h-none print:overflow-visible scrollbar-thin">
+      <div className="px-8 py-6 space-y-8 max-h-[calc(100vh-11rem)] report-page-scroll print:max-h-none print:overflow-visible">
         <section>
           <h2 className={sectionTitle}>Executive summary</h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -229,8 +231,8 @@ export default function SkyBarShopReport({
 
         <section>
           <h2 className={sectionTitle}>Transaction detail</h2>
-          <div className="overflow-x-auto -mx-2">
-            <table className="w-full min-w-[1100px] border-collapse">
+          <div className="-mx-2">
+            <table className="w-full min-w-[1480px] border-collapse">
               <thead>
                 <tr>
                   {[
@@ -245,12 +247,17 @@ export default function SkyBarShopReport({
                     'Service Charge',
                     'VAT',
                     'Total',
+                    'Tip',
+                    'Discount Type',
+                    'Discount Amount',
                     'Payment',
+                    'Card Name',
+                    'Txn',
                     'Status',
                     'Opening Time',
                     'Closing Time',
                   ].map((h) => (
-                    <th key={h} className={th}>
+                    <th key={h} className={h === 'Items' ? `${th} ${itemCol}` : th}>
                       {h}
                     </th>
                   ))}
@@ -262,13 +269,13 @@ export default function SkyBarShopReport({
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={onViewOrder ? 16 : 15} className={`${td} text-center py-8 text-gray-500`}>
+                    <td colSpan={onViewOrder ? 21 : 20} className={`${td} text-center py-8 text-gray-500`}>
                       Loading line items…
                     </td>
                   </tr>
                 ) : gridRows.length === 0 ? (
                   <tr>
-                    <td colSpan={onViewOrder ? 16 : 15} className={`${td} text-center py-8 text-gray-500`}>
+                    <td colSpan={onViewOrder ? 21 : 20} className={`${td} text-center py-8 text-gray-500`}>
                       No transactions for the selected range.
                     </td>
                   </tr>
@@ -286,7 +293,10 @@ export default function SkyBarShopReport({
                     <td className={tdNum}>{formatReportMoney(colTotals.serviceCharge)}</td>
                     <td className={tdNum}>{formatReportMoney(colTotals.vat)}</td>
                     <td className={tdNum}>{formatReportMoney(colTotals.orderTotal)}</td>
-                    <td className={td} colSpan={onViewOrder ? 5 : 4} />
+                    <td className={tdNum}>{formatReportMoney(colTotals.tip)}</td>
+                    <td className={td} />
+                    <td className={tdNum}>{formatReportMoney(colTotals.discount)}</td>
+                    <td className={td} colSpan={onViewOrder ? 7 : 6} />
                   </tr>
                 ) : null}
               </tbody>
@@ -318,7 +328,11 @@ function ReportGridRowView({
       <td className={`${td} font-medium whitespace-nowrap`}>{row.orderLabel}</td>
       <td className={td}>{row.tableLabel}</td>
       <td className={`${td} text-center`}>{row.guests}</td>
-      <td className={td}>{row.itemName}</td>
+      <td className={`${td} ${itemCol}`}>
+        <span className="line-clamp-2 leading-snug break-words" title={row.itemName}>
+          {row.itemName}
+        </span>
+      </td>
       <td className={`${td} text-center`}>{row.qty || '—'}</td>
       <td className={tdNum}>{row.qty ? formatReportMoney(row.unitPrice) : '—'}</td>
       <td className={tdNum}>{row.qty ? formatReportMoney(row.itemTotal) : '—'}</td>
@@ -326,7 +340,24 @@ function ReportGridRowView({
       <td className={tdNum}>{showMoney(row.serviceCharge)}</td>
       <td className={tdNum}>{showMoney(row.vat)}</td>
       <td className={tdNum}>{showMoney(row.orderTotal)}</td>
+      <td className={tdNum}>{showMoney(row.tip)}</td>
+      <td className={td}>
+        {row.discountParts.length > 0 ? (
+          row.discountParts.map((part) => (
+            <div key={`${row.key}-${part.type}`} className="whitespace-nowrap">{part.type}</div>
+          ))
+        ) : (row.payment ? '—' : '')}
+      </td>
+      <td className={tdNum}>
+        {row.discountParts.length > 0 ? (
+          row.discountParts.map((part) => (
+            <div key={`${row.key}-${part.type}-amt`} className="whitespace-nowrap">{formatReportMoney(part.amount)}</div>
+          ))
+        ) : (row.payment ? '—' : '')}
+      </td>
       <td className={td}>{row.payment}</td>
+      <td className={`${td} whitespace-nowrap`}>{row.cardName || (row.payment ? '—' : '')}</td>
+      <td className={`${td} whitespace-nowrap`}>{row.cardNumber || (row.payment ? '—' : '')}</td>
       <td className={td}>{row.status}</td>
       <td className={`${td} whitespace-nowrap text-[10px]`}>{row.openedAt}</td>
       <td className={`${td} whitespace-nowrap text-[10px]`}>{row.closedAt}</td>

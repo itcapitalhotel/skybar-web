@@ -32,7 +32,7 @@ export function ReceiptLayoutReviewer({
   const loadPaymentReceipt = async () => {
     const id = paymentIdInput.trim();
     if (!id) {
-      toast.error('Enter a payment ID from POST /api/payments');
+      toast.error('Enter a payment ID from a completed order');
       return;
     }
     setLoading(true);
@@ -58,12 +58,8 @@ export function ReceiptLayoutReviewer({
     <div className="space-y-4">
       <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-3">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          <strong className="text-foreground font-medium">Preview</strong> = this React layout (
-          <span className="font-mono">GET /api/receipts/{'{paymentId}'}</span> + config).{' '}
-          <strong className="text-foreground font-medium">Auto print</strong> = server ESC/POS to the receipt printer
-          on pay — same section order as preview after the API template update, not HTML. Check{' '}
-          <span className="font-mono">receiptPrinted</span> / <span className="font-mono">receiptPrintMessage</span>{' '}
-          on <span className="font-mono">POST /api/payments</span>, not preview styling.
+          <strong className="text-foreground font-medium">Preview</strong> shows how the receipt will look on screen.
+          Guest checks still print automatically to the receipt printer when a payment is completed.
         </p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex-1 min-w-[12rem]">

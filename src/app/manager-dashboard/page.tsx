@@ -111,7 +111,7 @@ export default function ManagerDashboardPage() {
 
         {loadError && (
           <p className="text-sm text-rose-400 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2">
-            {loadError} — ensure Spring Boot exposes all <code className="text-xs">/api/dashboard/*</code> endpoints.
+            {loadError}. Please try again in a moment.
           </p>
         )}
 

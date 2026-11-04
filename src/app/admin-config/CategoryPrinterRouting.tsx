@@ -226,7 +226,7 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
         if (summary.okCount === 0) {
           toast.error(`${row.name || 'Printer'}: not reachable — ${summary.lastMessage}`);
         } else if (summary.okCount < 5) {
-          toast.warning(`${row.name || 'Printer'}: ${summary.okCount}/5 TCP checks OK`);
+          toast.warning(`${row.name || 'Printer'}: ${summary.okCount}/5 connection checks passed`);
         } else {
           toast.success(`${row.name || 'Printer'}: reachable`);
         }
@@ -252,7 +252,7 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
       const tested = slots && !slots.every((s) => s === 'idle');
       const okHits = slots?.filter((s) => s === 'ok').length ?? 0;
       if (tested && okHits === 0) {
-        toast.error(`${p.name}: last TCP test failed — fix IP/port or run Test ×5 again`);
+        toast.error(`${p.name}: connection test failed — check the address and try Test again`);
         return;
       }
     }
@@ -299,17 +299,11 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
         <div className="flex items-start gap-2">
           <Link2 size={16} className="text-primary mt-0.5 flex-shrink-0" />
           <div className="text-xs text-muted-foreground space-y-1">
-            <p className="text-sm font-semibold text-foreground">One printer list per category</p>
+            <p className="text-sm font-semibold text-foreground">Kitchen printers by category</p>
             <p>
-              Tab load: <span className="font-mono">GET /api/menu/category-printers/{'{categoryId}'}</span> → bind{' '}
-              <span className="font-mono">response.printers</span> only. Bootstrap:{' '}
-              <span className="font-mono">GET …/category-printers/mappings</span>.
+              Select a category, then add the printers that should receive tickets for those items.
+              Save when you are done — each category can have its own printer list.
             </p>
-            <p>
-              Save: <span className="font-mono">PUT …/categories/{'{categoryId}'}/printers</span>, then re-GET that
-              category. <span className="font-mono">GET /api/kitchen-printers</span> = picker only.
-            </p>
-            <p className="font-mono text-[10px] text-foreground/70">docs/FRONTEND_ADMIN_CATEGORY_PRINTERS.md</p>
           </div>
         </div>
       </div>
@@ -444,7 +438,7 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
                         disabled={pingRunning || !endpointOk}
                         title={
                           endpointOk
-                            ? 'TCP test ×5 (same as Receipt Printer)'
+                            ? 'Test connection ×5'
                             : 'Enter a valid IPv4 and port first'
                         }
                         className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-50 disabled:cursor-not-allowed"

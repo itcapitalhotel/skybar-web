@@ -292,10 +292,36 @@ export default function FloorMapClient() {
     return sub * 1.21;
   })();
 
-  const handleVoidItem = async (itemId: string) => {
+  const handleVoidItem = async (itemId: string, reason: string) => {
     if (!selectedTable) return;
     const tableId = selectedTable.id;
-    await ordersApi.voidItem(tableId, itemId, { reason: 'Removed from table order' });
+    const staff = getStaffIdForOrder();
+    const trimmed = reason.trim();
+    if (!trimmed) {
+      throw new Error('Enter a reason to remove this item');
+    }
+    if (!staff) {
+      throw new Error('Sign in again to remove an item');
+    }
+    if (!itemId || itemId.startsWith('item-')) {
+      throw new Error('This item is not saved on the order yet');
+    }
+    try {
+      await ordersApi.voidItem(tableId, itemId, { reason: trimmed, staff });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      if (!/already voided/i.test(message)) throw err;
+    }
+    await fetchOrderForTable(tableId);
+  };
+
+  const handleUpdateItemQty = async (itemId: string, qty: number) => {
+    if (!selectedTable) return;
+    const tableId = selectedTable.id;
+    if (!itemId || itemId.startsWith('item-')) {
+      throw new Error('This item is not saved on the order yet');
+    }
+    await ordersApi.updateItem(tableId, itemId, { qty });
     await fetchOrderForTable(tableId);
   };
 
@@ -353,7 +379,9 @@ export default function FloorMapClient() {
 
   const handleAddItemsToTable = async (tableId: string, newItems: OrderItem[]) => {
     const staffId = getStaffIdForOrder();
-    if (!staffId) return;
+    if (!staffId) {
+      throw new Error('Sign in again to send the order');
+    }
     const guestCount = resolveGuestCountForTable(tableId);
     try {
       const result = await ordersApi.addItems(tableId, {
@@ -372,22 +400,33 @@ export default function FloorMapClient() {
       if (result.orderId) {
         setTableOrderIds(prev => ({ ...prev, [tableId]: String(result.orderId) }));
       }
+      if (result.addedItems?.length) {
+        const saved = result.addedItems.map((row) => ({
+          ...row,
+          id: String(row.id),
+          qty: Number(row.qty ?? 1),
+          unitPrice: Number(row.unitPrice ?? 0),
+          status: row.status ?? 'Queued',
+        }));
+        setTableOrders(prev => ({
+          ...prev,
+          [tableId]: [...(prev[tableId] ?? []).filter(i => i.id && !i.id.startsWith('item-')), ...saved],
+        }));
+      }
       if (result.guestCount != null && result.guestCount > 0) {
         syncTableGuestCount(tableId, result.guestCount);
       }
       const jobs = result.kitchenPrintJobs ?? result.categoryPrintJobs;
       const printJobs = jobs?.length ?? 0;
       if (printJobs > 0) {
-        toast.success(`Order sent · ${printJobs} kitchen print job${printJobs !== 1 ? 's' : ''} (see /topic/print/kitchen)`);
+        toast.success(`Order sent · ${printJobs} kitchen ticket${printJobs !== 1 ? 's' : ''} queued`);
       } else {
         toast.success('Order sent to kitchen');
       }
       await fetchOrderForTable(tableId);
-    } catch {
-      setTableOrders(prev => ({
-        ...prev,
-        [tableId]: [...(prev[tableId] ?? []), ...newItems],
-      }));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not send the order');
+      throw err;
     }
     setTables(prev => prev.map(t => {
       if (t.id === tableId && t.status === 'available') {
@@ -782,6 +821,7 @@ export default function FloorMapClient() {
                   items={currentItems}
                   role={role}
                   onVoidItem={handleVoidItem}
+                  onUpdateQty={handleUpdateItemQty}
                   onOpenSplit={() => setSplitOpen(true)}
                   onOpenTransfer={() => setTransferOpen(true)}
                   onOpenPayment={() => setPaymentOpen(true)}

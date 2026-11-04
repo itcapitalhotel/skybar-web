@@ -171,13 +171,19 @@ function mapPayments(raw: unknown): OrderDetailsPayment[] | undefined {
   if (!Array.isArray(raw) || raw.length === 0) return undefined;
   return raw.map((row) => {
     const p = row as Record<string, unknown>;
+    const split = (p.split ?? p.splitInfo) as Record<string, unknown> | undefined;
     const paidAt = str(p.paidAt ?? p.paid_at);
     const closedAt = str(p.closedAt ?? p.closed_at ?? p.timestamp);
     const time = closedAt ?? paidAt ?? str(p.time) ?? str(p.timestamp) ?? '';
     return {
       paymentId: String(p.paymentId ?? p.payment_id ?? p.id ?? ''),
-      guestLabel: str(p.guestLabel ?? p.guest_label),
-      method: String(p.method ?? ''),
+      guestLabel: str(
+        p.guestLabel
+          ?? p.guest_label
+          ?? split?.guestLabel
+          ?? split?.guest_label,
+      ),
+      method: String(p.methodLabel ?? p.method_label ?? p.method ?? ''),
       amount: num(p.amount) ?? 0,
       time,
       paidAt,
@@ -185,6 +191,9 @@ function mapPayments(raw: unknown): OrderDetailsPayment[] | undefined {
       staffId: coalesceStr(refId(p.staffId), refId(p.staff), str(p.staff_id)),
       staffName: coalesceStr(refName(p.staffName), refName(p.staff), str(p.staff_name)),
       staffRole: coalesceStr(refRole(p.staffRole), refRole(p.staff), str(p.staff_role)),
+      cardName: str(p.cardName ?? p.card_name) ?? null,
+      cardNumber: str(p.cardNumber ?? p.card_number) ?? null,
+      tip: num(p.tip ?? p.tips) ?? null,
     };
   });
 }
@@ -216,6 +225,15 @@ export function normalizeOrderDetailResponse(raw: Record<string, unknown>): Anal
     foodSubtotal: num(raw.foodSubtotal ?? raw.food_subtotal ?? raw.foodSales ?? raw.food_sales),
     drinkSubtotal: num(raw.drinkSubtotal ?? raw.drink_subtotal ?? raw.drinkSales ?? raw.drink_sales),
     discount: num(raw.discount),
+    discountTotal: num(raw.discountTotal ?? raw.discount_total) ?? null,
+    discountFood: num(raw.discountFood ?? raw.discount_food) ?? null,
+    discountDrink: num(raw.discountDrink ?? raw.discount_drink) ?? null,
+    discountTotalPercent: num(raw.discountTotalPercent ?? raw.discount_total_percent) ?? null,
+    discountFoodPercent: num(raw.discountFoodPercent ?? raw.discount_food_percent) ?? null,
+    discountDrinkPercent: num(raw.discountDrinkPercent ?? raw.discount_drink_percent) ?? null,
+    discountTotalPercentAmount: num(raw.discountTotalPercentAmount ?? raw.discount_total_percent_amount) ?? null,
+    discountFoodPercentAmount: num(raw.discountFoodPercentAmount ?? raw.discount_food_percent_amount) ?? null,
+    discountDrinkPercentAmount: num(raw.discountDrinkPercentAmount ?? raw.discount_drink_percent_amount) ?? null,
     guestCount: num(raw.guestCount ?? raw.guest_count),
     covers: num(raw.covers ?? raw.guestCount ?? raw.guest_count),
     openedAt: str(raw.openedAt ?? raw.opened_at),
@@ -274,6 +292,9 @@ export function normalizeOrderDetailResponse(raw: Record<string, unknown>): Anal
       primary?.staffName,
     ),
     roomNumber: str(raw.roomNumber ?? raw.room_number) ?? null,
+    cardName: str(raw.cardName ?? raw.card_name) ?? null,
+    cardNumber: str(raw.cardNumber ?? raw.card_number) ?? null,
+    tip: num(raw.tip ?? raw.tips) ?? primary?.tip ?? null,
     cashTendered: num(raw.cashTendered ?? raw.cash_tendered) ?? null,
     changeAmount: num(raw.changeAmount ?? raw.change_amount ?? raw.change),
     legacyPayment: bool(raw.legacyPayment ?? raw.legacy_payment),
@@ -338,6 +359,19 @@ export function mergeOrderDetailLayers(
     merges,
     splits,
     transfers,
+    cardName: coalesceStr(overlay.cardName ?? undefined, base.cardName ?? undefined) ?? null,
+    cardNumber: coalesceStr(overlay.cardNumber ?? undefined, base.cardNumber ?? undefined) ?? null,
+    tip: overlay.tip ?? base.tip ?? null,
+    discount: overlay.discount ?? base.discount,
+    discountTotal: overlay.discountTotal ?? base.discountTotal ?? null,
+    discountFood: overlay.discountFood ?? base.discountFood ?? null,
+    discountDrink: overlay.discountDrink ?? base.discountDrink ?? null,
+    discountTotalPercent: overlay.discountTotalPercent ?? base.discountTotalPercent ?? null,
+    discountFoodPercent: overlay.discountFoodPercent ?? base.discountFoodPercent ?? null,
+    discountDrinkPercent: overlay.discountDrinkPercent ?? base.discountDrinkPercent ?? null,
+    discountTotalPercentAmount: overlay.discountTotalPercentAmount ?? base.discountTotalPercentAmount ?? null,
+    discountFoodPercentAmount: overlay.discountFoodPercentAmount ?? base.discountFoodPercentAmount ?? null,
+    discountDrinkPercentAmount: overlay.discountDrinkPercentAmount ?? base.discountDrinkPercentAmount ?? null,
     merge: overlay.merge ?? base.merge,
     split: overlay.split ?? base.split,
     hasMerge: overlay.hasMerge ?? base.hasMerge ?? merges.length > 0,

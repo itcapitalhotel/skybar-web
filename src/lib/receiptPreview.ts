@@ -20,7 +20,11 @@ export interface ReceiptPreviewData {
   serviceCharge: number;
   vat: number;
   discount?: number;
+  discountTotal?: number;
+  discountFood?: number;
+  discountDrink?: number;
   total: number;
+  tip?: number;
   method: PaymentMethod;
   cashTendered?: number | null;
   change?: number;
@@ -70,7 +74,11 @@ export function mapReceiptApiToPreview(raw: Record<string, unknown>): ReceiptPre
     serviceCharge: num(raw.serviceCharge ?? raw.service_charge) ?? 0,
     vat: num(raw.vat) ?? 0,
     discount: num(raw.discount) ?? 0,
+    discountTotal: num(raw.discountTotal ?? raw.discount_total) ?? 0,
+    discountFood: num(raw.discountFood ?? raw.discount_food) ?? 0,
+    discountDrink: num(raw.discountDrink ?? raw.discount_drink) ?? 0,
     total: num(raw.total) ?? 0,
+    tip: num(raw.tip) ?? 0,
     method,
     cashTendered: num(raw.cashTendered ?? raw.cash_tendered) ?? null,
     change: num(raw.change ?? raw.changeAmount ?? raw.change_amount) ?? 0,

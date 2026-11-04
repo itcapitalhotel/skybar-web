@@ -335,6 +335,36 @@
     border-radius: 2px;
   }
 
+  /* Report panel: scrollbars stay visible so the wide table can always be slid. */
+  .report-page-scroll {
+    overflow: scroll;
+    scrollbar-gutter: stable;
+    scrollbar-width: auto;
+    scrollbar-color: #64748b #e5e7eb;
+  }
+
+  .report-page-scroll::-webkit-scrollbar {
+    width: 12px;
+    height: 14px;
+  }
+
+  .report-page-scroll::-webkit-scrollbar-track {
+    background: #e5e7eb;
+  }
+
+  .report-page-scroll::-webkit-scrollbar-thumb {
+    background: #64748b;
+    border-radius: 7px;
+    border: 2px solid #e5e7eb;
+  }
+
+  @media print {
+    .report-page-scroll {
+      overflow: visible;
+      max-height: none;
+    }
+  }
+
   .table-card-hover {
     transition: all 0.2s ease;
   }

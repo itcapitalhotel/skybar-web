@@ -521,7 +521,7 @@ export default function PostItemsPage() {
                     {editingItem ? 'Edit Menu Item' : 'Post Menu Item'}
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    POST /api/menu — name, categoryId, sizes &amp; prices
+                    {editingItem ? 'Update name, category, sizes, and prices' : 'Add a name, category, sizes, and prices'}
                   </p>
                 </div>
                 <button
@@ -566,7 +566,7 @@ export default function PostItemsPage() {
                   {quickCategoryOpen && (
                     <div className="mb-3 p-3 rounded-xl border border-primary/25 bg-primary/5 space-y-3">
                       <p className="text-[10px] text-muted-foreground">
-                        POST /api/menu/categories — <strong className="text-foreground">categoryType</strong> is required.
+                        Enter a label and choose whether this category is food or drink.
                       </p>
                       <input
                         value={quickCategoryLabel}

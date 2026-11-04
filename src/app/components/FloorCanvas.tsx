@@ -165,7 +165,7 @@ interface TableNodeProps {
   isDragging: boolean;
   editMode: boolean;
   showShapePicker: boolean;
-  onMouseDown: (e: React.MouseEvent, id: string) => void;
+  onPointerDown: (e: React.PointerEvent, id: string) => void;
   onClick: (e: React.MouseEvent, table: TableData) => void;
   onToggleShapePicker: (id: string) => void;
   onChangeShape?: (id: string, shape: TableShape) => void;
@@ -173,7 +173,7 @@ interface TableNodeProps {
 
 function TableNode({
   table, x, y, isSelected, isDragging, editMode,
-  showShapePicker, onMouseDown, onClick, onToggleShapePicker, onChangeShape,
+  showShapePicker, onPointerDown, onClick, onToggleShapePicker, onChangeShape,
 }: TableNodeProps) {
   const { w, h } = getTableDimensions(table.shape);
   const colors = STATUS_COLORS[table.status];
@@ -184,7 +184,7 @@ function TableNode({
 
   return (
     <div
-      onMouseDown={e => onMouseDown(e, table.id)}
+      onPointerDown={e => onPointerDown(e, table.id)}
       onClick={e => onClick(e, table)}
       style={{
         position: 'absolute',
@@ -198,7 +198,7 @@ function TableNode({
         boxShadow: isSelected
           ? `0 0 0 3px rgba(6,182,212,0.4), 0 0 20px ${colors.glow}`
           : `0 0 12px ${colors.glow}`,
-        cursor: editMode ? 'grab' : 'pointer',
+        cursor: editMode ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
         transition: isDragging ? 'none' : 'box-shadow 0.2s, border-color 0.2s',
         zIndex: isDragging ? 100 : isSelected ? 10 : 1,
         transform: isDragging ? 'scale(1.05)' : 'scale(1)',
@@ -208,6 +208,9 @@ function TableNode({
         justifyContent: 'center',
         padding: isStool ? 4 : 8,
         userSelect: 'none',
+        WebkitUserSelect: 'none',
+        // Critical for iPad: prevent page scroll from stealing the drag gesture
+        touchAction: editMode ? 'none' : 'manipulation',
         backdropFilter: 'blur(4px)',
       }}
     >
@@ -272,7 +275,7 @@ function TableNode({
           </div>
           {onChangeShape && (
             <button
-              onMouseDown={e => e.stopPropagation()}
+              onPointerDown={e => e.stopPropagation()}
               onClick={e => { e.stopPropagation(); onToggleShapePicker(table.id); }}
               style={{
                 position: 'absolute',
@@ -290,6 +293,7 @@ function TableNode({
                 whiteSpace: 'nowrap',
                 letterSpacing: '0.05em',
                 textTransform: 'uppercase',
+                touchAction: 'manipulation',
               }}
             >
               Shape
@@ -345,9 +349,18 @@ function ZonePage({
   hasUnsaved, onSave, onReset, saving, zoom,
 }: ZonePageProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
-  const [dragging, setDragging] = useState<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const [dragging, setDragging] = useState<{
+    id: string;
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+    pointerId: number;
+  } | null>(null);
   const [shapePickerFor, setShapePickerFor] = useState<string>('');
   const dragMovedRef = useRef(false);
+  const draggingRef = useRef(dragging);
+  draggingRef.current = dragging;
 
   const canvasW = Math.max(zone.canvasWidth, ...tables.map(t => {
     const pos = positions[t.id] ?? { x: t.x, y: t.y };
@@ -358,28 +371,63 @@ function ZonePage({
     return pos.y + getTableDimensions(t.shape).h + 200;
   }), 700);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent, tableId: string) => {
+  const handlePointerDown = useCallback((e: React.PointerEvent, tableId: string) => {
     if (!editMode) return;
+    // Ignore non-primary mouse buttons; allow touch/pen
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
     dragMovedRef.current = false;
     const table = tables.find(t => t.id === tableId);
     if (table) onSelectTable(table);
     const pos = positions[tableId] ?? { x: 0, y: 0 };
-    setDragging({ id: tableId, startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y });
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* older browsers */
+    }
+    setDragging({
+      id: tableId,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: pos.x,
+      origY: pos.y,
+      pointerId: e.pointerId,
+    });
   }, [editMode, positions, tables, onSelectTable]);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+  // Window-level listeners so iPad drag keeps working when finger leaves the table
+  useEffect(() => {
     if (!dragging) return;
-    dragMovedRef.current = true;
-    const dx = e.clientX - dragging.startX;
-    const dy = e.clientY - dragging.startY;
-    const newX = Math.max(10, dragging.origX + dx);
-    const newY = Math.max(10, dragging.origY + dy);
-    onPositionChange(dragging.id, newX, newY);
-  }, [dragging, onPositionChange]);
 
-  const handleMouseUp = useCallback(() => setDragging(null), []);
+    const onMove = (e: PointerEvent) => {
+      const current = draggingRef.current;
+      if (!current || e.pointerId !== current.pointerId) return;
+      e.preventDefault();
+      dragMovedRef.current = true;
+      const scale = zoom > 0 ? zoom : 1;
+      const dx = (e.clientX - current.startX) / scale;
+      const dy = (e.clientY - current.startY) / scale;
+      const newX = Math.max(10, current.origX + dx);
+      const newY = Math.max(10, current.origY + dy);
+      onPositionChange(current.id, newX, newY);
+    };
+
+    const onUp = (e: PointerEvent) => {
+      const current = draggingRef.current;
+      if (!current || e.pointerId !== current.pointerId) return;
+      setDragging(null);
+    };
+
+    window.addEventListener('pointermove', onMove, { passive: false });
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, [dragging, onPositionChange, zoom]);
 
   const handleTableClick = (e: React.MouseEvent, table: TableData) => {
     e.stopPropagation();
@@ -441,29 +489,38 @@ function ZonePage({
       </div>
 
       {/* Blueprint canvas */}
-      <div className="flex-1 overflow-auto" style={{ position: 'relative' }}>
+      <div
+        className="flex-1 overflow-auto"
+        style={{
+          position: 'relative',
+          // Lock scroll while a table is being dragged (iPad Safari otherwise pans the page)
+          overflow: dragging ? 'hidden' : 'auto',
+          touchAction: dragging ? 'none' : 'auto',
+        }}
+      >
         <div
           style={{
             width: '100%',
             height: '100%',
-            overflow: 'auto',
+            overflow: dragging ? 'hidden' : 'auto',
             position: 'relative',
+            touchAction: dragging ? 'none' : 'auto',
           }}
         >
           <div
             ref={canvasRef}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
             style={{
               position: 'relative',
               width: canvasW,
               height: canvasH,
               minWidth: '100%',
               userSelect: 'none',
+              WebkitUserSelect: 'none',
+              // Allow panning empty canvas; tables use touch-action:none so drag isn't stolen
+              touchAction: dragging ? 'none' : 'auto',
               transform: `scale(${zoom})`,
               transformOrigin: 'top left',
-              transition: 'transform 0.15s ease',
+              transition: dragging ? 'none' : 'transform 0.15s ease',
             }}
           >
             <BlueprintBg zoneColor={gridColor} />
@@ -520,7 +577,7 @@ function ZonePage({
                   isDragging={dragging?.id === table.id}
                   editMode={editMode}
                   showShapePicker={shapePickerFor === table.id}
-                  onMouseDown={handleMouseDown}
+                  onPointerDown={handlePointerDown}
                   onClick={handleTableClick}
                   onToggleShapePicker={id => setShapePickerFor(prev => prev === id ? '' : id)}
                   onChangeShape={onChangeShape}

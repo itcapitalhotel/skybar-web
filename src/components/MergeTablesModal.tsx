@@ -103,7 +103,7 @@ export default function MergeTablesModal({ isOpen, onClose, tables, tableOrders,
               <h3 className="text-base font-semibold text-foreground">Merge Tables</h3>
               <p className="text-xs text-muted-foreground">
                 {step === 'select'
-                  ? 'Select tables to combine — API merges one secondary into primary at a time'
+                  ? 'Select tables to combine into one check'
                   : `Merging ${selectedTables.length} tables · ${allMergedItems.length} items`}
               </p>
             </div>

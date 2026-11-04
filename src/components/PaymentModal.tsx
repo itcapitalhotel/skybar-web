@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, CreditCard, Banknote, QrCode, BedDouble, CheckCircle2, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { menuApi, menuCategoryApi, paymentsApi } from '@/lib/api/client';
@@ -28,6 +28,99 @@ interface PaymentModalProps {
 
 type PayMethod = PaymentMethod;
 
+const CARD_BRANDS = ['Visa', 'Amex', 'Master', 'Union'] as const;
+type CardBrand = (typeof CARD_BRANDS)[number];
+
+const DISCOUNT_KINDS = [
+  { id: 'total', label: 'Total' },
+  { id: 'food', label: 'Food' },
+  { id: 'drink', label: 'Drink' },
+] as const;
+type DiscountKind = (typeof DISCOUNT_KINDS)[number]['id'];
+
+function moneyInput(raw: string): number {
+  const n = parseFloat(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.round(n * 100) / 100;
+}
+
+function percentInput(raw: string): number {
+  const n = parseFloat(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.round(n * 100) / 100;
+}
+
+/** Same rounding as the API: percent of base, half-up to cents. */
+function percentMoney(percent: number, base: number): number {
+  if (percent <= 0 || base <= 0) return 0;
+  return Math.round((base * percent) / 100 * 100) / 100;
+}
+
+function DiscountKindFields({
+  label,
+  hint,
+  amount,
+  percent,
+  base,
+  onAmount,
+  onPercent,
+}: {
+  label: string;
+  hint?: string;
+  amount: string;
+  percent: string;
+  base: number;
+  onAmount: (value: string) => void;
+  onPercent: (value: string) => void;
+}) {
+  const fixed = moneyInput(amount);
+  const pct = percentInput(percent);
+  const fromPercent = percentMoney(pct, base);
+  const combined = Math.round((fixed + fromPercent) * 100) / 100;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <label className="text-xs text-muted-foreground font-medium">{label}</label>
+        {hint ? <span className="text-[10px] text-muted-foreground">{hint}</span> : null}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <input
+          type="number"
+          inputMode="decimal"
+          min={0}
+          step="0.01"
+          value={amount}
+          onChange={(e) => onAmount(e.target.value)}
+          placeholder="Amount $"
+          aria-label={`${label} amount`}
+          className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-foreground text-sm focus:outline-none focus:border-primary transition-colors"
+        />
+        <div className="relative">
+          <input
+            type="number"
+            inputMode="decimal"
+            min={0}
+            max={100}
+            step="0.01"
+            value={percent}
+            onChange={(e) => onPercent(e.target.value)}
+            placeholder="Percent"
+            aria-label={`${label} percent`}
+            className="w-full bg-input border border-border rounded-lg pl-3 pr-7 py-2.5 text-foreground text-sm focus:outline-none focus:border-primary transition-colors"
+          />
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
+        </div>
+      </div>
+      {pct > 0 ? (
+        <p className="text-[10px] text-emerald-400">
+          {pct}% of ${base.toFixed(2)} = ${fromPercent.toFixed(2)}
+          {fixed > 0 ? ` · with $${fixed.toFixed(2)} = $${combined.toFixed(2)}` : ''}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export default function PaymentModal({
   isOpen,
   onClose,
@@ -41,14 +134,121 @@ export default function PaymentModal({
   onPaymentComplete,
 }: PaymentModalProps) {
   const [method, setMethod] = useState<PayMethod>('card');
-  const [cashTendered, setCashTendered] = useState('');
+  const [cardName, setCardName] = useState<CardBrand>('Visa');
+  const [cardNumber, setCardNumber] = useState('');
   const [roomNumber, setRoomNumber] = useState('');
+  const [tip, setTip] = useState('');
+  const [discountKinds, setDiscountKinds] = useState<DiscountKind[]>([]);
+  const [discountTotal, setDiscountTotal] = useState('');
+  const [discountFood, setDiscountFood] = useState('');
+  const [discountDrink, setDiscountDrink] = useState('');
+  const [discountTotalPercent, setDiscountTotalPercent] = useState('');
+  const [discountFoodPercent, setDiscountFoodPercent] = useState('');
+  const [discountDrinkPercent, setDiscountDrinkPercent] = useState('');
+  const [foodSubtotalCap, setFoodSubtotalCap] = useState<number | null>(null);
+  const [drinkSubtotalCap, setDrinkSubtotalCap] = useState<number | null>(null);
   const [processing, setProcessing] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  const change = method === 'cash' ? Math.max(0, parseFloat(cashTendered || '0') - total) : 0;
+  useEffect(() => {
+    if (!isOpen) return;
+    setMethod('card');
+    setCardName('Visa');
+    setCardNumber('');
+    setRoomNumber('');
+    setTip('');
+    setDiscountKinds([]);
+    setDiscountTotal('');
+    setDiscountFood('');
+    setDiscountDrink('');
+    setDiscountTotalPercent('');
+    setDiscountFoodPercent('');
+    setDiscountDrinkPercent('');
+    setFoodSubtotalCap(null);
+    setDrinkSubtotalCap(null);
+    setProcessing(false);
+    setSuccess(false);
+  }, [isOpen, tableId]);
+
+  useEffect(() => {
+    if (!isOpen || !orderLineItems?.length) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [categories, menuItems] = await Promise.all([
+          menuCategoryApi.list(),
+          menuApi.list(),
+        ]);
+        if (cancelled) return;
+        const lookup = buildMenuCategoryLookup(categories, menuItems);
+        const split = aggregateSalesFromLineItems(orderLineItems, lookup);
+        setFoodSubtotalCap(split.food);
+        setDrinkSubtotalCap(split.drink);
+      } catch {
+        /* caps stay unknown; payment still accepts the amounts */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, orderLineItems]);
+
+  const tipAmount = Math.max(0, parseFloat(tip || '0') || 0);
+  const billOn = discountKinds.includes('total');
+  const foodOn = discountKinds.includes('food');
+  const drinkOn = discountKinds.includes('drink');
+  const billDiscount = billOn ? moneyInput(discountTotal) : 0;
+  const foodDiscount = foodOn ? moneyInput(discountFood) : 0;
+  const drinkDiscount = drinkOn ? moneyInput(discountDrink) : 0;
+  const billPercent = billOn ? percentInput(discountTotalPercent) : 0;
+  const foodPercent = foodOn ? percentInput(discountFoodPercent) : 0;
+  const drinkPercent = drinkOn ? percentInput(discountDrinkPercent) : 0;
+  const foodBase = foodSubtotalCap ?? 0;
+  const drinkBase = drinkSubtotalCap ?? 0;
+  const billPercentAmount = percentMoney(billPercent, total);
+  const foodPercentAmount = percentMoney(foodPercent, foodBase);
+  const drinkPercentAmount = percentMoney(drinkPercent, drinkBase);
+  const discountSum = Math.round((
+    billDiscount + foodDiscount + drinkDiscount
+    + billPercentAmount + foodPercentAmount + drinkPercentAmount
+  ) * 100) / 100;
+  const amountDue = Math.max(0, Math.round((total - discountSum) * 100) / 100);
+
+  const toggleDiscountKind = (kind: DiscountKind) => {
+    setDiscountKinds((prev) => (
+      prev.includes(kind) ? prev.filter((k) => k !== kind) : [...prev, kind]
+    ));
+  };
+  const cardReady =
+    method !== 'card'
+    || (Boolean(cardName) && cardNumber.trim().length > 0);
 
   const handleProcess = async () => {
+    if (method === 'card' && !cardNumber.trim()) {
+      toast.error('Enter the card transaction number');
+      return;
+    }
+    if (method === 'room' && !roomNumber.trim()) {
+      toast.error('Enter a room number');
+      return;
+    }
+    if (billPercent > 100 || foodPercent > 100 || drinkPercent > 100) {
+      toast.error('Discount percent cannot be more than 100');
+      return;
+    }
+    if (discountSum - total > 0.009) {
+      toast.error('Discounts cannot be more than the bill total');
+      return;
+    }
+    if (foodSubtotalCap != null && foodDiscount + foodPercentAmount - foodSubtotalCap > 0.009) {
+      toast.error(`Food discount cannot be more than $${foodSubtotalCap.toFixed(2)}`);
+      return;
+    }
+    if (drinkSubtotalCap != null && drinkDiscount + drinkPercentAmount - drinkSubtotalCap > 0.009) {
+      toast.error(`Drink discount cannot be more than $${drinkSubtotalCap.toFixed(2)}`);
+      return;
+    }
+
     setProcessing(true);
     try {
       const resolvedSubtotal = subtotal ?? total / 1.21;
@@ -81,26 +281,36 @@ export default function PaymentModal({
         tableId,
         guestCount: Math.max(1, guestCount),
         method,
+        cardName: method === 'card' ? cardName : null,
+        cardNumber: method === 'card' ? cardNumber.trim() : null,
         subtotal: resolvedSubtotal,
         serviceCharge: resolvedService,
         vat: resolvedVat,
         total,
         foodSubtotal,
         drinkSubtotal,
-        cashTendered: method === 'cash' ? parseFloat(cashTendered || '0') : null,
-        roomNumber: method === 'room' ? roomNumber : null,
-        discount: 0,
+        cashTendered: null,
+        roomNumber: method === 'room' ? roomNumber.trim() : null,
+        tip: tipAmount > 0 ? tipAmount : 0,
+        discountTotal: billDiscount,
+        discountFood: foodDiscount,
+        discountDrink: drinkDiscount,
+        discountTotalPercent: billPercent,
+        discountFoodPercent: foodPercent,
+        discountDrinkPercent: drinkPercent,
         staffId,
         cashierId: staffId,
       });
 
       setSuccess(true);
       setTimeout(() => {
-        toast.success(`Payment of $${total.toFixed(2)} processed via ${method.toUpperCase()}`, { duration: 3000 });
+        const methodLabel =
+          method === 'card' ? `${cardName.toUpperCase()} CARD` : method.toUpperCase();
+        toast.success(`Payment of $${amountDue.toFixed(2)} processed via ${methodLabel}`, { duration: 3000 });
         if (result.receiptPrinted === false) {
           toast.warning(
             result.receiptPrintMessage?.trim()
-              || 'Receipt did not print — check Receipt Printer IP/port in Admin Config.',
+              || 'Receipt did not print — check the receipt printer in Admin Config.',
             { duration: 6000 },
           );
         }
@@ -133,7 +343,7 @@ export default function PaymentModal({
               <CheckCircle2 size={32} className="text-emerald-400" />
             </div>
             <h3 className="text-lg font-semibold text-foreground">Payment Successful</h3>
-            <p className="text-muted-foreground text-sm">${total.toFixed(2)} — {tableId}</p>
+            <p className="text-muted-foreground text-sm">${amountDue.toFixed(2)} — {tableId}</p>
           </div>
         ) : (
           <div className="p-4 md:p-6">
@@ -148,8 +358,89 @@ export default function PaymentModal({
             </div>
 
             <div className="text-center py-3 md:py-4 mb-4 md:mb-5 rounded-xl bg-primary/10 border border-primary/20">
-              <p className="text-3xl md:text-4xl font-bold text-primary text-tabular">${total.toFixed(2)}</p>
+              <p className="text-3xl md:text-4xl font-bold text-primary text-tabular">${amountDue.toFixed(2)}</p>
               <p className="text-xs text-muted-foreground mt-1">Amount Due</p>
+              {discountSum > 0 ? (
+                <p className="text-[11px] text-emerald-400 mt-1.5">
+                  Bill ${total.toFixed(2)} − discount ${discountSum.toFixed(2)}
+                </p>
+              ) : null}
+              {tipAmount > 0 ? (
+                <p className="text-[11px] text-muted-foreground mt-1.5">
+                  Tip ${tipAmount.toFixed(2)} (recorded separately)
+                </p>
+              ) : null}
+            </div>
+
+            <div className="mb-4 md:mb-5 space-y-2">
+              <label className="text-xs text-muted-foreground block font-medium">Discount</label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {DISCOUNT_KINDS.map((kind) => {
+                  const on = discountKinds.includes(kind.id);
+                  return (
+                    <button
+                      key={kind.id}
+                      type="button"
+                      onClick={() => toggleDiscountKind(kind.id)}
+                      className={`py-2 rounded-xl border text-xs font-semibold transition-all ${
+                        on
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                          : 'border-border text-muted-foreground hover:border-emerald-500/40 hover:text-foreground'
+                      }`}
+                    >
+                      {kind.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-muted-foreground">Select one or more. Enter a dollar amount, a percent, or both.</p>
+              {billOn && (
+                <DiscountKindFields
+                  label="Discount on total"
+                  hint={`Bill $${total.toFixed(2)}`}
+                  amount={discountTotal}
+                  percent={discountTotalPercent}
+                  base={total}
+                  onAmount={setDiscountTotal}
+                  onPercent={setDiscountTotalPercent}
+                />
+              )}
+              {foodOn && (
+                <DiscountKindFields
+                  label="Discount on food"
+                  hint={foodSubtotalCap != null ? `Food $${foodSubtotalCap.toFixed(2)}` : 'Food subtotal'}
+                  amount={discountFood}
+                  percent={discountFoodPercent}
+                  base={foodBase}
+                  onAmount={setDiscountFood}
+                  onPercent={setDiscountFoodPercent}
+                />
+              )}
+              {drinkOn && (
+                <DiscountKindFields
+                  label="Discount on drink"
+                  hint={drinkSubtotalCap != null ? `Drink $${drinkSubtotalCap.toFixed(2)}` : 'Drink subtotal'}
+                  amount={discountDrink}
+                  percent={discountDrinkPercent}
+                  base={drinkBase}
+                  onAmount={setDiscountDrink}
+                  onPercent={setDiscountDrinkPercent}
+                />
+              )}
+            </div>
+
+            <div className="mb-4 md:mb-5">
+              <label className="text-xs text-muted-foreground block mb-1.5 font-medium">Tip (optional)</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={tip}
+                onChange={(e) => setTip(e.target.value)}
+                placeholder="0.00"
+                className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-foreground text-sm focus:outline-none focus:border-primary transition-colors"
+              />
             </div>
 
             <div className="grid grid-cols-4 gap-1.5 md:gap-2 mb-4 md:mb-5">
@@ -170,34 +461,40 @@ export default function PaymentModal({
               ))}
             </div>
 
-            {method === 'cash' && (
+            {method === 'card' && (
               <div className="mb-4 md:mb-5 space-y-3 fade-in">
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1.5 font-medium">Cash Tendered</label>
+                  <label className="text-xs text-muted-foreground block mb-1.5 font-medium">Card brand</label>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {CARD_BRANDS.map((brand) => (
+                      <button
+                        key={brand}
+                        type="button"
+                        onClick={() => setCardName(brand)}
+                        className={`py-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                          cardName === brand
+                            ? 'bg-primary/15 border-primary/40 text-primary'
+                            : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                        }`}
+                      >
+                        {brand}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1.5 font-medium">
+                    Transaction number
+                  </label>
                   <input
-                    type="number"
-                    value={cashTendered}
-                    onChange={e => setCashTendered(e.target.value)}
-                    placeholder="0.00"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={cardNumber}
+                    onChange={(e) => setCardNumber(e.target.value)}
+                    placeholder="Terminal / approval reference"
                     className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-foreground text-sm focus:outline-none focus:border-primary transition-colors"
                   />
-                </div>
-                {parseFloat(cashTendered) > 0 && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Change Due</span>
-                    <span className="text-emerald-400 font-semibold text-tabular">${change.toFixed(2)}</span>
-                  </div>
-                )}
-                <div className="flex gap-2">
-                  {[total, Math.ceil(total / 10) * 10 + 10, Math.ceil(total / 20) * 20 + 20].map((amt, i) => (
-                    <button
-                      key={`cash-preset-${i}`}
-                      onClick={() => setCashTendered(amt.toFixed(2))}
-                      className="flex-1 py-1.5 rounded-lg bg-muted/50 border border-border text-xs text-muted-foreground hover:text-foreground hover:border-primary/50 transition-all"
-                    >
-                      ${amt.toFixed(0)}
-                    </button>
-                  ))}
                 </div>
               </div>
             )}
@@ -226,7 +523,11 @@ export default function PaymentModal({
 
             <button
               onClick={handleProcess}
-              disabled={processing || (method === 'cash' && parseFloat(cashTendered || '0') < total)}
+              disabled={
+                processing
+                || !cardReady
+                || (method === 'room' && !roomNumber.trim())
+              }
               className="w-full btn-primary rounded-xl py-3 md:py-3.5 font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {processing ? (

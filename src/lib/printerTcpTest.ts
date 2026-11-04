@@ -83,16 +83,16 @@ export async function runTcpPrinterPingSeries(
     let ok = false;
     try {
       const result = await configApi.testPrinter(printerIp, printerPort);
-      lastMessage = result.message?.trim() || (result.connected ? 'API said connected' : 'No response');
+      lastMessage = result.message?.trim() || (result.connected ? 'Printer reachable' : 'No response');
       ok = isPrinterTcpReachable(printerIp, result);
       if (result.connected && !ok) {
-        lastMessage = `Server returned success but check failed — ${lastMessage}. Fix backend TCP test or response.`;
+        lastMessage = `Connection check failed — ${lastMessage}. Verify the printer address and try again.`;
       }
       if (ok) {
         const local = await verifyLocalTcpInDev(printerIp, printerPort);
         if (local && !local.ok) {
           ok = false;
-          lastMessage = `Backend reported OK, but this computer cannot open TCP to ${printerIp}:${printerPort} (${local.message}). ICMP ping may also fail — fix backend to use a real socket test.`;
+          lastMessage = `Could not reach ${printerIp}:${printerPort} from this terminal (${local.message}). Check the printer network settings.`;
         }
       }
     } catch (err) {

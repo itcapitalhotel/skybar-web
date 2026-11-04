@@ -152,7 +152,7 @@ export default function LoginPage() {
             {loadingStaff ? (
               <p className="text-center text-sm text-muted-foreground py-8">Loading staff...</p>
             ) : staffList.length === 0 ? (
-              <p className="text-center text-sm text-muted-foreground py-8">No staff accounts found. Check backend connection.</p>
+              <p className="text-center text-sm text-muted-foreground py-8">No staff accounts found. Contact your manager if this continues.</p>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {staffList.map(staff => {

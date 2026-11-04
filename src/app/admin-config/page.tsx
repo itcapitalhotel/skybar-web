@@ -191,8 +191,8 @@ export default function AdminConfigPage() {
       }, ({ lastMessage, okCount }) => {
         setDefaultPingDetail(
           okCount === 0
-            ? `${lastMessage} — TCP ${config.printerPort} on ${config.printerIp} (not ICMP ping).`
-            : `${lastMessage} (${okCount}/${PRINTER_PING_COUNT} TCP OK)`,
+            ? `${lastMessage} — could not reach ${config.printerIp}:${config.printerPort}.`
+            : `${lastMessage} (${okCount}/${PRINTER_PING_COUNT} checks passed)`,
         );
       });
     } finally {
@@ -286,8 +286,8 @@ export default function AdminConfigPage() {
           ...prev,
           [key]:
             okCount === 0
-              ? `${lastMessage} — TCP ${port} on ${ip} (not ICMP ping).`
-              : `${lastMessage} (${okCount}/${PRINTER_PING_COUNT} TCP OK)`,
+              ? `${lastMessage} — could not reach ${ip}:${port}.`
+              : `${lastMessage} (${okCount}/${PRINTER_PING_COUNT} checks passed)`,
         }));
       });
     } catch (err) {
@@ -688,10 +688,7 @@ export default function AdminConfigPage() {
                       </p>
                     )}
                     <p className="text-[11px] text-muted-foreground">
-                      Blue = TCP connect OK to port {config.printerPort || '9100'} (ESC/POS). Red = refused/timeout.
-                      This is <strong className="font-normal text-foreground/90">not</strong> ICMP ping — a host can fail{' '}
-                      <span className="font-mono">ping</span> in Terminal but still respond on 9100, or the opposite if the backend returns a stub{' '}
-                      <span className="font-mono">connected: true</span>.
+                      Blue means the printer responded. Red means it could not be reached — check the address, port, power, and network.
                     </p>
                   </div>
 
@@ -704,10 +701,8 @@ export default function AdminConfigPage() {
                       <p className="text-sm font-semibold text-foreground">Zone Printer Assignment</p>
                     </div>
                     <p className="text-xs text-muted-foreground mb-4">
-                      <strong className="text-foreground font-medium">Add Printer</strong> opens a row locally; the server save runs when you enter a valid IP (e.g.{' '}
-                      <span className="font-mono text-foreground/80">172.19.14.1</span>) and tab out of the field (
-                      <span className="font-mono text-foreground/80">POST /api/zones/{'{zoneId}'}/printers</span>).
-                      Mark one printer as <strong className="text-foreground font-medium">Default</strong> per zone.
+                      Click <strong className="text-foreground font-medium">Add Printer</strong>, enter the printer name and network address, then click outside the field to save.
+                      Mark one printer as <strong className="text-foreground font-medium">Default</strong> for each zone.
                     </p>
 
                     {zonePrintersLoading ? (
@@ -754,7 +749,7 @@ export default function AdminConfigPage() {
                                       Printer {idx + 1}
                                       {isDraftZonePrinterId(printer.id) && (
                                         <span className="ml-2 text-amber-500/90 normal-case tracking-normal">
-                                          (unsaved — enter IP, then click outside the field)
+                                          (unsaved — enter address, then click outside the field)
                                         </span>
                                       )}
                                     </span>
@@ -824,7 +819,7 @@ export default function AdminConfigPage() {
                                         }
                                         title={
                                           validatePrinterEndpoint(printer.printerIp, printer.printerPort).ok
-                                            ? 'TCP test ×5'
+                                            ? 'Test connection ×5'
                                             : 'Enter a valid IP (e.g. 192.168.1.100) and port'
                                         }
                                         className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
@@ -862,13 +857,13 @@ export default function AdminConfigPage() {
 
                   {/* Setup Notes */}
                   <div className="p-4 rounded-xl bg-muted/20 border border-border text-xs text-muted-foreground space-y-1">
-                    <p className="font-medium text-foreground text-sm mb-2">Setup Notes</p>
-                    <p>• Ensure each printer is connected to the same local network as this terminal.</p>
-                    <p>• Default port for ESC/POS network printers is <span className="font-mono text-foreground">9100</span>.</p>
-                    <p>• Assign a static IP to each printer in your router settings to prevent IP changes.</p>
-                    <p>• Zone printers (<span className="font-mono">zone_printers</span>) override venue config for that zone.</p>
-                    <p>• Test runs 5× <span className="font-mono">POST /api/config/printer/test</span> (TCP to IP:port). Backend must set <span className="font-mono">connected: false</span> when the socket fails — not a stub always-true.</p>
-                    <p>• Map menu categories to printers in the sidebar → <strong className="text-foreground">Category Printer</strong>.</p>
+                    <p className="font-medium text-foreground text-sm mb-2">Setup tips</p>
+                    <p>• Keep each printer on the same network as this terminal.</p>
+                    <p>• Most network receipt printers use port <span className="font-mono text-foreground">9100</span>.</p>
+                    <p>• Use a fixed address for each printer so it does not change after a reboot.</p>
+                    <p>• Zone printers override the venue default for that floor area.</p>
+                    <p>• Use <strong className="text-foreground">Test</strong> to confirm a printer is reachable before service.</p>
+                    <p>• Route kitchen tickets by category under <strong className="text-foreground">Category Printer</strong>.</p>
                   </div>
                 </div>
               )}
@@ -880,8 +875,8 @@ export default function AdminConfigPage() {
                     <div>
                       <h2 className="text-base font-semibold text-foreground mb-1">Category Printer</h2>
                       <p className="text-sm text-muted-foreground">
-                        Food &amp; drink tickets when ordering — <strong className="text-foreground font-medium">name, IP, port</strong> per category only.
-                        Not Receipt Printer. See <span className="font-mono text-foreground/80">docs/FRONTEND_CATEGORY_PRINTERS.md</span>.
+                        Assign kitchen printers to menu categories for food and drink tickets.
+                        Receipt printers are configured separately under Printers.
                       </p>
                     </div>
                     <button
@@ -922,9 +917,7 @@ export default function AdminConfigPage() {
                   <div>
                     <h2 className="text-base font-semibold text-foreground mb-1">Receipt Layout</h2>
                     <p className="text-sm text-muted-foreground">
-                      Header and footer from config; preview uses{' '}
-                      <span className="font-mono text-foreground/80">GET /api/receipts/{'{paymentId}'}</span> for lines.
-                      See <span className="font-mono text-foreground/80">docs/FRONTEND_RECEIPT_PREVIEW.md</span>.
+                      Customize the receipt header and footer shown on printed guest checks. Use the preview below to review the layout.
                     </p>
                   </div>
 

@@ -29,6 +29,23 @@ export function paymentMethodDisplay(method: string): string {
   return method || '—';
 }
 
+/** Payment column label — includes card brand + txn when method is card. */
+export function paymentMethodDetailLabel(
+  method: string,
+  cardName?: string | null,
+  cardNumber?: string | null,
+): string {
+  const base = paymentMethodDisplay(method);
+  const m = (method || '').trim().toLowerCase();
+  if (!m.includes('card') && base !== 'card') return base;
+  const parts = [base === 'card' ? 'card' : base];
+  const brand = cardName?.trim();
+  const txn = cardNumber?.trim();
+  if (brand) parts.push(brand);
+  if (txn) parts.push(`Txn ${txn}`);
+  return parts.join(' · ');
+}
+
 export function fmtReportDateTime(iso?: string): string {
   if (!iso) return '—';
   try {
@@ -198,7 +215,7 @@ export function aggregateFinancials(details: AnalyticsTransactionDetail[]): Fina
     subtotal += Number(d.subtotal ?? raw.subtotal ?? 0);
     serviceCharge += Number(d.serviceCharge ?? raw.service_charge ?? 0);
     vat += Number(d.vat ?? 0);
-    tips += Number(raw.tips ?? raw.tip ?? 0);
+    tips += Number(d.tip ?? raw.tips ?? raw.tip ?? 0);
     grandTotal += Number(d.total ?? d.amount ?? 0);
   }
   if (grandTotal > 0 && subtotal === 0 && serviceCharge === 0 && vat === 0) {
@@ -227,6 +244,46 @@ export function paymentMethodBreakdown(details: AnalyticsTransactionDetail[]): P
     .sort((a, b) => b.total - a.total);
 }
 
+export interface ReportDiscountPart {
+  type: string;
+  amount: number;
+}
+
+export function discountParts(detail: {
+  discount?: number | null;
+  discountTotal?: number | null;
+  discountFood?: number | null;
+  discountDrink?: number | null;
+  discountTotalPercent?: number | null;
+  discountFoodPercent?: number | null;
+  discountDrinkPercent?: number | null;
+  discountTotalPercentAmount?: number | null;
+  discountFoodPercentAmount?: number | null;
+  discountDrinkPercentAmount?: number | null;
+}): ReportDiscountPart[] {
+  const parts: ReportDiscountPart[] = [];
+  const push = (type: string, amount?: number | null) => {
+    const n = Number(amount ?? 0);
+    if (n > 0) parts.push({ type, amount: n });
+  };
+  push('Total', detail.discountTotal);
+  if (Number(detail.discountTotalPercent ?? 0) > 0 || Number(detail.discountTotalPercentAmount ?? 0) > 0) {
+    push(`Total ${Number(detail.discountTotalPercent ?? 0)}%`, detail.discountTotalPercentAmount);
+  }
+  push('Food', detail.discountFood);
+  if (Number(detail.discountFoodPercent ?? 0) > 0 || Number(detail.discountFoodPercentAmount ?? 0) > 0) {
+    push(`Food ${Number(detail.discountFoodPercent ?? 0)}%`, detail.discountFoodPercentAmount);
+  }
+  push('Drink', detail.discountDrink);
+  if (Number(detail.discountDrinkPercent ?? 0) > 0 || Number(detail.discountDrinkPercentAmount ?? 0) > 0) {
+    push(`Drink ${Number(detail.discountDrinkPercent ?? 0)}%`, detail.discountDrinkPercentAmount);
+  }
+  if (parts.length === 0 && Number(detail.discount ?? 0) > 0) {
+    parts.push({ type: 'Discount', amount: Number(detail.discount) });
+  }
+  return parts;
+}
+
 export interface ReportGridRow {
   key: string;
   orderLabel: string;
@@ -240,7 +297,11 @@ export interface ReportGridRow {
   serviceCharge: number;
   vat: number;
   orderTotal: number;
+  tip: number;
+  discountParts: ReportDiscountPart[];
   payment: string;
+  cardName: string;
+  cardNumber: string;
   status: string;
   openedAt: string;
   closedAt: string;
@@ -314,7 +375,11 @@ export function buildReportGridRows(details: AnalyticsTransactionDetail[]): Repo
       serviceCharge,
       vat,
       orderTotal,
+      tip: Number(d.tip ?? 0) || 0,
+      discountParts: discountParts(d),
       payment: paymentMethodDisplay(d.method),
+      cardName: d.cardName?.trim() ?? '',
+      cardNumber: d.cardNumber?.trim() ?? '',
       status: 'DONE',
       openedAt: fmtReportDateTime(d.openedAt),
       closedAt: fmtReportDateTime(d.closedAt ?? d.time),
@@ -362,7 +427,11 @@ export function buildReportGridRows(details: AnalyticsTransactionDetail[]): Repo
         serviceCharge: isLast ? base.serviceCharge : 0,
         vat: isLast ? base.vat : 0,
         orderTotal: isLast ? base.orderTotal : 0,
+        tip: isLast ? base.tip : 0,
+        discountParts: isLast ? base.discountParts : [],
         payment: isLast ? base.payment : '',
+        cardName: isLast ? base.cardName : '',
+        cardNumber: isLast ? base.cardNumber : '',
         status: isLast ? base.status : '',
         openedAt: isLast ? base.openedAt : '',
         closedAt: isLast ? base.closedAt : '',
@@ -379,9 +448,11 @@ export function gridColumnTotals(rows: ReportGridRow[]) {
       if (r.serviceCharge > 0 || r.isOrderSummaryOnly) acc.serviceCharge += r.serviceCharge;
       if (r.vat > 0 || r.isOrderSummaryOnly) acc.vat += r.vat;
       if (r.orderTotal > 0 || r.isOrderSummaryOnly) acc.orderTotal += r.orderTotal;
+      acc.tip += r.tip;
+      acc.discount += r.discountParts.reduce((s, p) => s + p.amount, 0);
       return acc;
     },
-    { subtotal: 0, serviceCharge: 0, vat: 0, orderTotal: 0 },
+    { subtotal: 0, serviceCharge: 0, vat: 0, orderTotal: 0, tip: 0, discount: 0 },
   );
 }
 
@@ -475,7 +546,12 @@ export function buildShopReportCsv(
       'Service Charge',
       'VAT',
       'Total',
+      'Tip',
+      'Discount Type',
+      'Discount Amount',
       'Payment',
+      'Card Name',
+      'Txn',
       'Status',
       'Opening Time',
       'Closing Time',
@@ -498,7 +574,12 @@ export function buildShopReportCsv(
         showFin ? moneyCsv(row.serviceCharge) : '',
         showFin ? moneyCsv(row.vat) : '',
         showFin ? moneyCsv(row.orderTotal) : '',
+        showFin ? moneyCsv(row.tip) : '',
+        row.discountParts.map((p) => p.type).join('\n'),
+        row.discountParts.map((p) => moneyCsv(p.amount)).join('\n'),
         row.payment,
+        row.cardName,
+        row.cardNumber,
         row.status,
         row.openedAt,
         row.closedAt,
@@ -520,6 +601,11 @@ export function buildShopReportCsv(
         moneyCsv(colTotals.serviceCharge),
         moneyCsv(colTotals.vat),
         moneyCsv(colTotals.orderTotal),
+        moneyCsv(colTotals.tip),
+        '',
+        moneyCsv(colTotals.discount),
+        '',
+        '',
         '',
         '',
         '',

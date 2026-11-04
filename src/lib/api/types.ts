@@ -337,6 +337,25 @@ export interface TableOrder {
   total: number;
 }
 
+/** One cancelled line from GET /api/orders/voids (open and paid orders). */
+export interface VoidReportLine {
+  id: string;
+  orderId?: string;
+  /** active = still open, paid = check already closed */
+  orderStatus?: string;
+  tableId?: string;
+  tableLabel?: string;
+  name: string;
+  qty: number;
+  unitPrice: number;
+  categoryType?: 'food' | 'drink';
+  size?: string;
+  voidedByStaffId?: string;
+  voidedByStaffName?: string;
+  voidedAt?: string;
+  voidReason?: string;
+}
+
 export interface AddOrderItemsRequest {
   items: Array<{
     menuItemId: string;
@@ -384,8 +403,14 @@ export interface AddOrderItemsResponse {
   categoryPrintJobs?: KitchenPrintJob[];
 }
 
+export interface UpdateOrderItemRequest {
+  qty: number;
+}
+
 export interface VoidOrderItemRequest {
   reason: string;
+  /** Staff user id — required by the API */
+  staff: string;
   managerApproval?: string;
 }
 
@@ -477,6 +502,10 @@ export interface ProcessPaymentRequest {
   tableId: string;
   guestCount?: number;
   method: PaymentMethod;
+  /** Card brand when method is card — e.g. Visa, Amex, Master, Union */
+  cardName?: string | null;
+  /** Terminal / approval transaction reference when method is card */
+  cardNumber?: string | null;
   subtotal: number;
   serviceCharge: number;
   vat: number;
@@ -486,7 +515,20 @@ export interface ProcessPaymentRequest {
   drinkSubtotal?: number;
   cashTendered?: number | null;
   roomNumber?: string | null;
-  discount?: number;
+  /** Guest tip — stored separately, not included in total */
+  tip?: number | null;
+  /** Bill-wide discount amount. Not added into total by the client — API subtracts it. */
+  discountTotal?: number | null;
+  /** Food-category discount. Can be combined with drink and bill discounts. */
+  discountFood?: number | null;
+  /** Drink-category discount. Can be combined with food and bill discounts. */
+  discountDrink?: number | null;
+  /** Percent off the pre-discount bill total (0–100). Server converts this to money. */
+  discountTotalPercent?: number | null;
+  /** Percent off the food subtotal (0–100). */
+  discountFoodPercent?: number | null;
+  /** Percent off the drink subtotal (0–100). */
+  discountDrinkPercent?: number | null;
   /** User id of staff processing payment (e.g. u2) — required for reports */
   staffId?: string;
   cashierId?: string;
@@ -519,6 +561,10 @@ export interface ProcessPaymentResponse {
   cashTendered?: number | null;
   changeAmount?: number;
   roomNumber?: string | null;
+  cardName?: string | null;
+  cardNumber?: string | null;
+  /** Guest tip — not included in total */
+  tip?: number | null;
 }
 
 /** GET /api/receipts/{paymentId} — payment fields plus line items for preview. */
@@ -535,6 +581,12 @@ export interface SplitPaymentLine {
   amount: number;
   cashTendered?: number | null;
   roomNumber?: string | null;
+  /** Card brand when method is card — e.g. Visa, Amex, Master, Union */
+  cardName?: string | null;
+  /** Terminal / approval transaction reference when method is card */
+  cardNumber?: string | null;
+  /** Guest tip for this split — not included in amount */
+  tip?: number | null;
   discount?: number;
 }
 
@@ -555,6 +607,8 @@ export interface SplitPaymentResponse {
     amount: number;
     method: PaymentMethod;
     closedAt?: string;
+    cardName?: string | null;
+    cardNumber?: string | null;
   }>;
 }
 
@@ -785,6 +839,8 @@ export interface AnalyticsTransaction {
   items?: number;
   foodSubtotal?: number;
   drinkSubtotal?: number;
+  cardName?: string | null;
+  cardNumber?: string | null;
 }
 
 export interface AnalyticsTransactionSplitPart {
@@ -793,6 +849,8 @@ export interface AnalyticsTransactionSplitPart {
   amount: number;
   itemIds?: string[];
   paymentId?: string;
+  cardName?: string | null;
+  cardNumber?: string | null;
 }
 
 export interface AnalyticsTransactionMergeInfo {
@@ -865,6 +923,15 @@ export interface AnalyticsTransactionDetail {
   serviceCharge?: number;
   vat?: number;
   discount?: number;
+  discountTotal?: number | null;
+  discountFood?: number | null;
+  discountDrink?: number | null;
+  discountTotalPercent?: number | null;
+  discountFoodPercent?: number | null;
+  discountDrinkPercent?: number | null;
+  discountTotalPercentAmount?: number | null;
+  discountFoodPercentAmount?: number | null;
+  discountDrinkPercentAmount?: number | null;
   /** Party size — prefer guestCount from API */
   guestCount?: number;
   covers?: number;
@@ -881,6 +948,12 @@ export interface AnalyticsTransactionDetail {
   cashierId?: string;
   cashierName?: string;
   roomNumber?: string | null;
+  /** Card brand when method is card */
+  cardName?: string | null;
+  /** Terminal / approval transaction reference when method is card */
+  cardNumber?: string | null;
+  /** Guest tip — not included in total/amount */
+  tip?: number | null;
   cashTendered?: number | null;
   changeAmount?: number;
   legacyPayment?: boolean;
@@ -913,6 +986,9 @@ export interface OrderDetailsPayment {
   staffId?: string;
   staffName?: string;
   staffRole?: string;
+  cardName?: string | null;
+  cardNumber?: string | null;
+  tip?: number | null;
 }
 
 export interface OrderDetailsResponse {
@@ -930,6 +1006,9 @@ export interface OrderDetailsResponse {
   paymentId?: string;
   method?: string;
   roomNumber?: string | null;
+  cardName?: string | null;
+  cardNumber?: string | null;
+  tip?: number | null;
   cashTendered?: number | null;
   changeAmount?: number;
   legacyPayment?: boolean;

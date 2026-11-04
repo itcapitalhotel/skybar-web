@@ -21,11 +21,48 @@ function getLanDevOrigins() {
   return [...new Set(origins)];
 }
 
+const isProd = process.env.NODE_ENV === 'production';
+
+const securityHeaders = [
+  { key: 'X-DNS-Prefetch-Control', value: 'on' },
+  { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=()' },
+  { key: 'X-XSS-Protection', value: '0' },
+  {
+    key: 'Content-Security-Policy',
+    value: [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'self'",
+      "object-src 'none'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https:",
+      "font-src 'self' data:",
+      // Same-origin /api proxy + direct WS to backend in LAN/dev
+      "connect-src 'self' ws: wss: http: https:",
+      "worker-src 'self' blob:",
+    ].join('; '),
+  },
+];
+
+if (isProd) {
+  securityHeaders.push({
+    key: 'Strict-Transport-Security',
+    value: 'max-age=63072000; includeSubDomains; preload',
+  });
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Prevent Next.js from picking /Users/naknak (parent lockfile) as workspace root
   outputFileTracingRoot: projectRoot,
-  productionBrowserSourceMaps: true,
+  // Never ship source maps to browsers in production (leaks app internals)
+  productionBrowserSourceMaps: false,
+  poweredByHeader: false,
   distDir: process.env.DIST_DIR || '.next',
   allowedDevOrigins: getLanDevOrigins(),
 
@@ -41,6 +78,15 @@ const nextConfig = {
     remotePatterns: imageHosts,
     minimumCacheTTL: 60,
     qualities: [75, 85, 100],
+  },
+
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: securityHeaders,
+      },
+    ];
   },
 
   // Proxy /api/* → Spring Boot on Mac (avoids CORS from phone at http://<ip>:4028)

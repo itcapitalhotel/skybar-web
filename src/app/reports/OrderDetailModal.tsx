@@ -55,7 +55,20 @@ function paymentMethodLabel(txn: AnalyticsTransactionDetail): string {
   if ((m.includes('room') || m === 'room') && txn.roomNumber) {
     return `Room ${txn.roomNumber}`;
   }
+  if (m.includes('card')) {
+    const parts = [txn.method || 'Card'];
+    if (txn.cardName?.trim()) parts.push(txn.cardName.trim());
+    if (txn.cardNumber?.trim()) parts.push(`Txn ${txn.cardNumber.trim()}`);
+    return parts.join(' · ');
+  }
   return txn.method || '—';
+}
+
+function cardDetailSuffix(cardName?: string | null, cardNumber?: string | null): string {
+  const parts: string[] = [];
+  if (cardName?.trim()) parts.push(cardName.trim());
+  if (cardNumber?.trim()) parts.push(`Txn ${cardNumber.trim()}`);
+  return parts.length ? ` · ${parts.join(' · ')}` : '';
 }
 
 /** Row data from Reports list — used if detail APIs fail */
@@ -65,6 +78,8 @@ export interface OrderListSnapshot {
   time: string;
   staff: string;
   tableLabel: string;
+  cardName?: string | null;
+  cardNumber?: string | null;
 }
 
 interface OrderDetailModalProps {
@@ -95,19 +110,17 @@ export default function OrderDetailModal({
       setLoadNote(null);
       setTxn(null);
 
-      const tried: string[] = [];
       let analyticsError: string | null = null;
 
       await ensureStaffNameCache();
 
       try {
-        tried.push(`GET /api/analytics/transactions/${paymentId}`);
         const detail = await analyticsApi.getTransaction(paymentId);
         if (cancelled) return;
         let merged = detail;
         if (detail.legacyPayment) {
           setLoadNote(
-            'Legacy payment — the order was removed at checkout, so line items are not stored. Totals, zone, room, and staff come from the payment record.',
+            'This is an older payment — item lines were not saved at checkout. Totals and staff still come from the payment record.',
           );
         }
         const oid = detail.orderId ?? orderIdHint;
@@ -141,12 +154,10 @@ export default function OrderDetailModal({
 
       if (orderIdHint) {
         try {
-          tried.push(`GET /api/orders/details/${orderIdHint}`);
           const od = await ordersApi.getDetails(orderIdHint);
           if (cancelled) return;
           setTxn(normalizeOrderDetailResponse({ ...od, paymentId } as unknown as Record<string, unknown>));
-          // od from getDetails is already normalized shape via client wrapper
-          setLoadNote(analyticsError ? `Loaded via /orders/details (${analyticsError})` : null);
+          setLoadNote(null);
           return;
         } catch {
           /* receipt next */
@@ -154,7 +165,6 @@ export default function OrderDetailModal({
       }
 
       try {
-        tried.push(`GET /api/receipts/${paymentId}`);
         const receipt = await paymentsApi.getReceipt(paymentId);
         if (cancelled) return;
         setTxn(normalizeOrderDetailResponse({
@@ -162,7 +172,7 @@ export default function OrderDetailModal({
           paymentId,
           changeAmount: receipt.change ?? receipt.changeAmount,
         }));
-        setLoadNote(analyticsError ? `Loaded from receipt (${analyticsError})` : 'Loaded from receipt.');
+        setLoadNote(null);
         return;
       } catch {
         /* list snapshot */
@@ -180,14 +190,16 @@ export default function OrderDetailModal({
           time: listSnapshot.time,
           openedByStaffName: listSnapshot.staff,
           staffName: listSnapshot.staff,
+          cardName: listSnapshot.cardName,
+          cardNumber: listSnapshot.cardNumber,
         });
-        setLoadNote(analyticsError ?? 'Showing Reports list summary only.');
+        setLoadNote('Showing summary from the reports list.');
         return;
       }
 
       if (!cancelled) {
         setError(analyticsError ?? 'Payment detail could not be loaded.');
-        setLoadNote(tried.join('\n'));
+        setLoadNote(null);
       }
     })().finally(() => {
       if (!cancelled) setLoading(false);
@@ -262,7 +274,7 @@ export default function OrderDetailModal({
           {txn?.legacyPayment && !loading && (
             <p className="text-[10px] text-sky-400/95 bg-sky-500/10 border border-sky-500/25 rounded-lg px-3 py-2 flex gap-2">
               <Info size={14} className="shrink-0 mt-0.5" />
-              <span>Legacy payment — line items were not saved at checkout. New payments keep full order history.</span>
+              <span>Older payment — item lines were not saved at checkout. Newer payments keep full order history.</span>
             </p>
           )}
 
@@ -277,9 +289,6 @@ export default function OrderDetailModal({
               <AlertCircle size={16} className="shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <p className="font-medium">{error}</p>
-                {loadNote && (
-                  <p className="text-[10px] opacity-70 whitespace-pre-line">Tried:<br />{loadNote}</p>
-                )}
               </div>
             </div>
           )}
@@ -334,6 +343,12 @@ export default function OrderDetailModal({
                 {txn.roomNumber && (
                   <InfoChip icon={<BedDouble size={12} />} label="Room" value={txn.roomNumber} />
                 )}
+                {txn.cardName?.trim() && (
+                  <InfoChip icon={<CreditCard size={12} />} label="Card" value={txn.cardName.trim()} />
+                )}
+                {txn.cardNumber?.trim() && (
+                  <InfoChip icon={<CreditCard size={12} />} label="Txn #" value={txn.cardNumber.trim()} />
+                )}
               </section>
 
               {(txn.openedAt || txn.closedAt) && (
@@ -353,8 +368,23 @@ export default function OrderDetailModal({
                   <Line label="Subtotal" value={txn.subtotal} />
                   <Line label="Service charge" value={txn.serviceCharge} />
                   <Line label="VAT" value={txn.vat} />
-                  {(txn.discount ?? 0) > 0 && <Line label="Discount" value={-(txn.discount ?? 0)} />}
+                  {(txn.discountTotal ?? 0) > 0 && <Line label="Discount total" value={-(txn.discountTotal ?? 0)} />}
+                  {(txn.discountTotalPercentAmount ?? 0) > 0 && (
+                    <Line label={`Discount total ${txn.discountTotalPercent ?? 0}%`} value={-(txn.discountTotalPercentAmount ?? 0)} />
+                  )}
+                  {(txn.discountFood ?? 0) > 0 && <Line label="Discount food" value={-(txn.discountFood ?? 0)} />}
+                  {(txn.discountFoodPercentAmount ?? 0) > 0 && (
+                    <Line label={`Discount food ${txn.discountFoodPercent ?? 0}%`} value={-(txn.discountFoodPercentAmount ?? 0)} />
+                  )}
+                  {(txn.discountDrink ?? 0) > 0 && <Line label="Discount drink" value={-(txn.discountDrink ?? 0)} />}
+                  {(txn.discountDrinkPercentAmount ?? 0) > 0 && (
+                    <Line label={`Discount drink ${txn.discountDrinkPercent ?? 0}%`} value={-(txn.discountDrinkPercentAmount ?? 0)} />
+                  )}
+                  {(txn.discount ?? 0) > 0
+                    && !(txn.discountTotal || txn.discountFood || txn.discountDrink)
+                    && <Line label="Discount" value={-(txn.discount ?? 0)} />}
                   <Line label="Total" value={displayTotal} bold />
+                  {(txn.tip ?? 0) > 0 && <Line label="Tip" value={txn.tip} />}
                 </section>
               )}
 
@@ -363,11 +393,16 @@ export default function OrderDetailModal({
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Payments</p>
                   {payments.map((p) => (
                     <div key={p.paymentId} className="flex flex-wrap justify-between gap-x-2 gap-y-0.5 py-1 border-b border-border/40 last:border-0">
-                      <span className="font-medium text-foreground">{p.method}</span>
+                      <span className="font-medium text-foreground">
+                        {p.method}{cardDetailSuffix(p.cardName, p.cardNumber)}
+                      </span>
                       <span className="text-muted-foreground" title={p.paidAt && p.closedAt && p.paidAt !== p.closedAt ? `Paid ${fmtWhen(p.paidAt)}` : undefined}>
                         {fmtWhen(p.closedAt ?? p.time)}
                       </span>
                       <span className="font-semibold tabular-nums ml-auto">${p.amount.toFixed(2)}</span>
+                      {(p.tip ?? 0) > 0 && (
+                        <span className="w-full text-[10px] text-muted-foreground">Tip ${Number(p.tip).toFixed(2)}</span>
+                      )}
                       {p.staffName && (
                         <span className="w-full text-[10px] text-muted-foreground">
                           {p.staffName}{p.staffRole ? ` · ${p.staffRole}` : ''}
@@ -571,6 +606,10 @@ function SplitSessionRow({
             const legacy = legacyParts?.[idx];
             const guest = pay?.guestLabel ?? legacy?.guestLabel ?? `Guest ${idx + 1}`;
             const method = formatPayMethod(pay?.method ?? legacy?.method);
+            const cardBits = cardDetailSuffix(
+              pay?.cardName ?? legacy?.cardName,
+              pay?.cardNumber ?? legacy?.cardNumber,
+            );
             const amount = pay?.amount ?? legacy?.amount;
             const isCurrent = id === currentPaymentId;
             return (
@@ -582,7 +621,7 @@ function SplitSessionRow({
                 }`}
               >
                 <span className="font-medium text-foreground min-w-[4.5rem]">{guest}</span>
-                <span className="text-muted-foreground">{method}</span>
+                <span className="text-muted-foreground">{method}{cardBits}</span>
                 {amount != null && (
                   <span className="font-semibold tabular-nums ml-auto">${Number(amount).toFixed(2)}</span>
                 )}
@@ -600,7 +639,9 @@ function SplitSessionRow({
           {legacyParts.map((part, idx) => (
             <li key={`legacy-part-${idx}`} className="flex justify-between gap-2 text-sm">
               <span className="font-medium">{part.guestLabel}</span>
-              <span className="text-muted-foreground">{formatPayMethod(part.method)}</span>
+              <span className="text-muted-foreground">
+                {formatPayMethod(part.method)}{cardDetailSuffix(part.cardName, part.cardNumber)}
+              </span>
               <span className="font-semibold tabular-nums">${Number(part.amount).toFixed(2)}</span>
             </li>
           ))}
@@ -614,7 +655,9 @@ function LegacySplitPartRow({ part }: { part: AnalyticsTransactionSplitPart }) {
   return (
     <div className="flex justify-between gap-2">
       <span>{part.guestLabel}</span>
-      <span className="text-muted-foreground">{part.method}</span>
+      <span className="text-muted-foreground">
+        {part.method}{cardDetailSuffix(part.cardName, part.cardNumber)}
+      </span>
       <span className="font-semibold">${Number(part.amount).toFixed(2)}</span>
     </div>
   );

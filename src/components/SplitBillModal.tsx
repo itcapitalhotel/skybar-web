@@ -42,6 +42,9 @@ const PAYMENT_METHODS: { id: PaymentMethod; label: string }[] = [
   { id: 'room', label: 'Room' },
 ];
 
+const CARD_BRANDS = ['Visa', 'Amex', 'Master', 'Union'] as const;
+type CardBrand = (typeof CARD_BRANDS)[number];
+
 const MIN_WAYS = 2;
 const MAX_WAYS = 20;
 
@@ -57,6 +60,48 @@ function equalShares(total: number, count: number): number[] {
   const remainder = Math.round((total - sum) * 100) / 100;
   if (amounts.length > 0) amounts[amounts.length - 1] += remainder;
   return amounts;
+}
+
+function GuestCardFields({
+  cardName,
+  cardNumber,
+  onCardNameChange,
+  onCardNumberChange,
+}: {
+  cardName: CardBrand;
+  cardNumber: string;
+  onCardNameChange: (brand: CardBrand) => void;
+  onCardNumberChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-2 pl-0 sm:pl-[3.75rem]">
+      <div className="grid grid-cols-4 gap-1.5">
+        {CARD_BRANDS.map(brand => (
+          <button
+            key={brand}
+            type="button"
+            onClick={() => onCardNameChange(brand)}
+            className={`py-2 rounded-lg border text-[10px] font-semibold transition-all ${
+              cardName === brand
+                ? 'bg-primary/15 border-primary/40 text-primary'
+                : 'border-border text-muted-foreground hover:border-primary/40 hover:text-foreground'
+            }`}
+          >
+            {brand}
+          </button>
+        ))}
+      </div>
+      <input
+        type="text"
+        inputMode="numeric"
+        autoComplete="off"
+        value={cardNumber}
+        onChange={e => onCardNumberChange(e.target.value)}
+        placeholder="Transaction / approval number"
+        className="w-full h-9 rounded-xl border border-border bg-muted/20 px-3 text-sm text-foreground focus:outline-none focus:border-primary/50"
+      />
+    </div>
+  );
 }
 
 function SplitCountField({
@@ -130,6 +175,8 @@ export default function SplitBillModal({
   const [assignments, setAssignments] = useState<Record<string, number>>({});
   const [guestAmounts, setGuestAmounts] = useState<number[]>(() => equalShares(total, 2));
   const [guestMethods, setGuestMethods] = useState<PaymentMethod[]>(['card', 'card']);
+  const [guestCardNames, setGuestCardNames] = useState<CardBrand[]>(['Visa', 'Visa']);
+  const [guestCardNumbers, setGuestCardNumbers] = useState<string[]>(['', '']);
   const [processing, setProcessing] = useState(false);
 
   const displayTable = tableLabel ?? tableId;
@@ -142,6 +189,8 @@ export default function SplitBillModal({
     setAssignments({});
     setGuestAmounts(equalShares(total, 2));
     setGuestMethods(['card', 'card']);
+    setGuestCardNames(['Visa', 'Visa']);
+    setGuestCardNumbers(['', '']);
   }, [isOpen, total]);
 
   useEffect(() => {
@@ -153,6 +202,14 @@ export default function SplitBillModal({
     setGuestMethods(prev => {
       if (prev.length === splitCount) return prev;
       return Array.from({ length: splitCount }, (_, i) => prev[i] ?? 'card');
+    });
+    setGuestCardNames(prev => {
+      if (prev.length === splitCount) return prev;
+      return Array.from({ length: splitCount }, (_, i) => prev[i] ?? 'Visa');
+    });
+    setGuestCardNumbers(prev => {
+      if (prev.length === splitCount) return prev;
+      return Array.from({ length: splitCount }, (_, i) => prev[i] ?? '');
     });
   }, [splitCount, total, mode]);
 
@@ -184,6 +241,31 @@ export default function SplitBillModal({
       next[index] = method;
       return next;
     });
+  };
+
+  const setGuestCardName = (index: number, brand: CardBrand) => {
+    setGuestCardNames(prev => {
+      const next = [...prev];
+      next[index] = brand;
+      return next;
+    });
+  };
+
+  const setGuestCardNumber = (index: number, value: string) => {
+    setGuestCardNumbers(prev => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
+  };
+
+  const withCardFields = (line: SplitPaymentLine, guestIndex: number): SplitPaymentLine => {
+    if (line.method !== 'card') return line;
+    return {
+      ...line,
+      cardName: guestCardNames[guestIndex] ?? 'Visa',
+      cardNumber: (guestCardNumbers[guestIndex] ?? '').trim() || null,
+    };
   };
 
   const handleConfirm = async () => {
@@ -220,23 +302,23 @@ export default function SplitBillModal({
       if (mode === 'equal') {
         const shares = equalShares(total, splitCount);
         const itemGroups = partitionItemsEvenly(lineItems, splitCount);
-        splits = shares.map((amount, i) => ({
+        splits = shares.map((amount, i) => withCardFields({
           guestLabel: `Guest ${i + 1}`,
           itemIds: itemGroups[i] ?? [],
           method: guestMethods[i] ?? 'card',
           amount,
-        }));
+        }, i));
       } else if (mode === 'amount') {
         const active = guestAmounts
           .map((a, i) => ({ amount: Math.round(a * 100) / 100, guestIndex: i }))
           .filter(x => x.amount > 0);
         const itemGroups = partitionItemsByAmounts(lineItems, active.map(x => x.amount));
-        splits = active.map((row, idx) => ({
+        splits = active.map((row, idx) => withCardFields({
           guestLabel: `Guest ${row.guestIndex + 1}`,
           itemIds: itemGroups[idx] ?? [],
           method: guestMethods[row.guestIndex] ?? 'card',
           amount: row.amount,
-        }));
+        }, row.guestIndex));
       } else {
         const guests = Array.from({ length: splitCount }).map((_, i) => {
           const guestNum = i + 1;
@@ -254,18 +336,24 @@ export default function SplitBillModal({
         const shareRemainder = Math.round((total - shareSum) * 100) / 100;
         if (shareAmounts.length > 0) shareAmounts[shareAmounts.length - 1] += shareRemainder;
 
-        splits = guests.map((g, idx) => ({
+        splits = guests.map((g, idx) => withCardFields({
           guestLabel: `Guest ${g.guestNum}`,
           itemIds: g.ids,
           method: guestMethods[g.guestNum - 1] ?? 'card',
           amount: shareAmounts[idx] ?? 0,
-        })).filter(s => s.itemIds.length > 0 && s.amount > 0);
+        }, g.guestNum - 1)).filter(s => s.itemIds.length > 0 && s.amount > 0);
       }
 
       splits = splits.filter(s => s.itemIds.length > 0 && s.amount > 0);
 
       if (splits.length === 0) {
         toast.error('No split payments to process');
+        return;
+      }
+
+      const missingTxn = splits.find(s => s.method === 'card' && !s.cardNumber?.trim());
+      if (missingTxn) {
+        toast.error(`Enter transaction number for ${missingTxn.guestLabel}`);
         return;
       }
 
@@ -354,13 +442,13 @@ export default function SplitBillModal({
                 <span className="text-primary font-bold text-lg text-tabular">${perPerson.toFixed(2)}</span>
               </div>
               <p className="text-[10px] text-muted-foreground">
-                Lines are split across guests for the API (disjoint itemIds). Max ways = {items.length} on this check.
+                Assign each item to a guest. You can split into up to {items.length} ways on this check.
               </p>
             </div>
           )}
 
           {mode === 'amount' && (
-            <div className="space-y-2 fade-in">
+            <div className="space-y-3 fade-in">
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Must total ${total.toFixed(2)}</span>
                 <span className={Math.abs(amountDelta) <= 0.02 ? 'text-emerald-400' : 'text-rose-400'}>
@@ -368,29 +456,39 @@ export default function SplitBillModal({
                 </span>
               </div>
               {guestAmounts.map((amt, i) => (
-                <div key={`guest-amt-${i}`} className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground w-14">Guest {i + 1}</span>
-                  <div className="relative flex-1">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step="0.01"
-                      min={0}
-                      value={Number.isFinite(amt) ? amt : ''}
-                      onChange={e => setGuestAmount(i, e.target.value)}
-                      className="w-full h-9 pl-7 pr-3 rounded-xl border border-border bg-muted/20 text-sm font-semibold text-tabular focus:outline-none focus:border-primary/50"
-                    />
+                <div key={`guest-amt-${i}`} className="rounded-xl border border-border bg-muted/10 p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground w-14">Guest {i + 1}</span>
+                    <div className="relative flex-1">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="0.01"
+                        min={0}
+                        value={Number.isFinite(amt) ? amt : ''}
+                        onChange={e => setGuestAmount(i, e.target.value)}
+                        className="w-full h-9 pl-7 pr-3 rounded-xl border border-border bg-muted/20 text-sm font-semibold text-tabular focus:outline-none focus:border-primary/50"
+                      />
+                    </div>
+                    <select
+                      value={guestMethods[i] ?? 'card'}
+                      onChange={e => setGuestMethod(i, e.target.value as PaymentMethod)}
+                      className="h-9 rounded-xl border border-border bg-muted/20 text-xs px-2"
+                    >
+                      {PAYMENT_METHODS.map(m => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </select>
                   </div>
-                  <select
-                    value={guestMethods[i] ?? 'card'}
-                    onChange={e => setGuestMethod(i, e.target.value as PaymentMethod)}
-                    className="h-9 rounded-xl border border-border bg-muted/20 text-xs px-2"
-                  >
-                    {PAYMENT_METHODS.map(m => (
-                      <option key={m.id} value={m.id}>{m.label}</option>
-                    ))}
-                  </select>
+                  {(guestMethods[i] ?? 'card') === 'card' && (
+                    <GuestCardFields
+                      cardName={guestCardNames[i] ?? 'Visa'}
+                      cardNumber={guestCardNumbers[i] ?? ''}
+                      onCardNameChange={brand => setGuestCardName(i, brand)}
+                      onCardNumberChange={value => setGuestCardNumber(i, value)}
+                    />
+                  )}
                 </div>
               ))}
               <button
@@ -433,20 +531,30 @@ export default function SplitBillModal({
           )}
 
           {(mode === 'equal' || mode === 'byitem') && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <p className="text-xs text-muted-foreground font-medium">Payment method per guest</p>
               {Array.from({ length: splitCount }).map((_, i) => (
-                <div key={`guest-method-${i}`} className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground w-14">Guest {i + 1}</span>
-                  <select
-                    value={guestMethods[i] ?? 'card'}
-                    onChange={e => setGuestMethod(i, e.target.value as PaymentMethod)}
-                    className="flex-1 h-9 rounded-xl border border-border bg-muted/20 text-xs px-2"
-                  >
-                    {PAYMENT_METHODS.map(m => (
-                      <option key={m.id} value={m.id}>{m.label}</option>
-                    ))}
-                  </select>
+                <div key={`guest-method-${i}`} className="rounded-xl border border-border bg-muted/10 p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground w-14">Guest {i + 1}</span>
+                    <select
+                      value={guestMethods[i] ?? 'card'}
+                      onChange={e => setGuestMethod(i, e.target.value as PaymentMethod)}
+                      className="flex-1 h-9 rounded-xl border border-border bg-muted/20 text-xs px-2"
+                    >
+                      {PAYMENT_METHODS.map(m => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {(guestMethods[i] ?? 'card') === 'card' && (
+                    <GuestCardFields
+                      cardName={guestCardNames[i] ?? 'Visa'}
+                      cardNumber={guestCardNumbers[i] ?? ''}
+                      onCardNameChange={brand => setGuestCardName(i, brand)}
+                      onCardNumberChange={value => setGuestCardNumber(i, value)}
+                    />
+                  )}
                 </div>
               ))}
             </div>

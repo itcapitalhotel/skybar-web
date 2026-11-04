@@ -5,7 +5,12 @@ import { fileURLToPath } from 'node:url';
 
 const PORT = 4028;
 const root = join(fileURLToPath(import.meta.url), '..', '..');
-const nextBin = join(root, 'node_modules', '.bin', 'next');
+const nextBin = join(
+  root,
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? 'next.cmd' : 'next',
+);
 
 function getLocalIp() {
   const interfaces = networkInterfaces();
@@ -43,7 +48,15 @@ console.log('');
 const child = spawn(
   nextBin,
   ['dev', '-p', String(PORT), '-H', host],
-  { stdio: 'inherit', cwd: root },
+  {
+    stdio: 'inherit',
+    cwd: root,
+    shell: process.platform === 'win32',
+  },
 );
 
+child.on('error', (err) => {
+  console.error(err);
+  process.exit(1);
+});
 child.on('exit', (code) => process.exit(code ?? 0));

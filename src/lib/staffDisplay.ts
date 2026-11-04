@@ -1,11 +1,26 @@
-import { getAuthUser } from '@/lib/api/config';
+import { getAuthToken, getAuthUser } from '@/lib/api/config';
 import { staffApi, usersApi } from '@/lib/api/client';
 
 let nameById: Record<string, string> = {};
 
+function userIdFromAccessToken(): string {
+  const token = getAuthToken();
+  if (!token) return '';
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return '';
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+    const payload = JSON.parse(atob(padded)) as { userId?: string };
+    return typeof payload.userId === 'string' ? payload.userId.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
 /** Staff user id for order/KDS API — backend expects id (e.g. u2), not display name. */
 export function getStaffIdForOrder(): string {
-  return getAuthUser()?.id ?? '';
+  return getAuthUser()?.id || userIdFromAccessToken();
 }
 
 export function getStaffNameForDisplay(): string {

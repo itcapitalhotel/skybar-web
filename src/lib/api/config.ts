@@ -41,10 +41,28 @@ export interface StoredAuthUser {
   avatar?: string;
 }
 
-/** Retrieve the stored JWT (client-side only) */
+/** Retrieve the stored JWT (client-side only). Expired tokens are cleared. */
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem(AUTH_TOKEN_KEY);
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (!token) return null;
+  // Lazy import avoided — inline exp check keeps this sync for AuthGuard
+  try {
+    const parts = token.split('.');
+    if (parts.length >= 2) {
+      const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+      const payload = JSON.parse(atob(padded)) as { exp?: number };
+      if (typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now()) {
+        clearAuthToken();
+        return null;
+      }
+    }
+  } catch {
+    clearAuthToken();
+    return null;
+  }
+  return token;
 }
 
 /** Persist a JWT after login */

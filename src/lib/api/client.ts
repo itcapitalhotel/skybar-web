@@ -13,7 +13,8 @@ import type {
   Booking, CreateBookingRequest, UpdateBookingRequest,
   StockItem, UpdateStockCountRequest, BulkStockUpdateRequest,
   StockHistoryEntry, StockReconcileRequest, StockReconcileResponse,
-  KDSTicket, KDSStatus, TableOrder, AddOrderItemsRequest, AddOrderItemsResponse, VoidOrderItemRequest,
+  KDSTicket, KDSStatus, TableOrder, OrderItem, AddOrderItemsRequest, AddOrderItemsResponse,
+  UpdateOrderItemRequest, VoidOrderItemRequest, VoidReportLine,
   ApiMenuItem, MenuCategory, MenuItem, CreateMenuCategoryRequest, UpdateMenuCategoryRequest,
   ProcessPaymentRequest, ProcessPaymentResponse, ReceiptResponse, SplitPaymentRequest, SplitPaymentResponse,
   ShiftSummary, OpenShiftRequest, CloseShiftRequest, CloseShiftResponse,
@@ -163,8 +164,16 @@ export const tablesApi = {
   delete: (id: string) => del<{ message: string }>(`/tables/${id}`),
   updateStatus: (
     id: string,
-    data: { status: TableData['status']; guestCount?: number; staff?: string },
-  ) => patch<TableData>(`/tables/${id}/status`, data),
+    data: { status: TableData['status']; guestCount?: number; guests?: number; staff?: string },
+  ) => {
+    // Backend UpdateTableStatusRequest expects `guests` (not guestCount).
+    const party = data.guests ?? data.guestCount;
+    return patch<TableData>(`/tables/${id}/status`, {
+      status: data.status,
+      ...(data.staff != null ? { staff: data.staff } : {}),
+      ...(party != null ? { guests: party } : {}),
+    });
+  },
   updatePosition: (id: string, x: number, y: number) =>
     patch<TableData>(`/tables/${id}/position`, { x, y }),
   updateLayout: (updates: TableLayoutUpdate[]) =>
@@ -173,26 +182,51 @@ export const tablesApi = {
   transfer: (data: TransferTableRequest) => post<TransferTableResponse>('/tables/transfer', data),
 };
 
+function mapOrderLine(row: unknown): OrderItem {
+  const raw = (row ?? {}) as Record<string, unknown>;
+  const status = String(raw.status ?? 'Queued');
+  return {
+    id: String(raw.id ?? raw.itemId ?? raw.item_id ?? ''),
+    menuItemId: raw.menuItemId != null ? String(raw.menuItemId) : raw.menu_item_id != null ? String(raw.menu_item_id) : undefined,
+    categoryId: raw.categoryId != null ? String(raw.categoryId) : undefined,
+    name: String(raw.name ?? ''),
+    qty: Number(raw.qty ?? 1),
+    unitPrice: Number(raw.unitPrice ?? raw.unit_price ?? 0),
+    status: (status === 'In_Prep' ? 'In Prep' : status) as OrderItem['status'],
+    notes: raw.notes != null ? String(raw.notes) : undefined,
+    size: raw.size != null ? String(raw.size) : undefined,
+  };
+}
+
 // ─── Orders ───────────────────────────────────────────────────────────────────
 export const ordersApi = {
   list: (params?: { tableId?: string; status?: string }) => get<TableOrder[]>('/orders', params),
+  listVoids: (params?: { from?: string; to?: string }) => get<VoidReportLine[]>('/orders/voids', params),
   get: async (tableId: string): Promise<TableOrder> => {
     const raw = await get<Record<string, unknown>>(`/orders/${tableId}`);
+    const items = Array.isArray(raw.items) ? raw.items.map((row) => mapOrderLine(row)) : [];
     return {
       tableId: String(raw.tableId ?? tableId),
       orderId: raw.orderId != null ? String(raw.orderId) : raw.order_id != null ? String(raw.order_id) : undefined,
       guestCount: Number(raw.guestCount ?? raw.guest_count) || undefined,
-      items: (raw.items as TableOrder['items']) ?? [],
+      items,
       subtotal: Number(raw.subtotal ?? 0),
       serviceCharge: Number(raw.serviceCharge ?? raw.service_charge ?? 0),
       vat: Number(raw.vat ?? 0),
       total: Number(raw.total ?? 0),
     };
   },
-  addItems: (tableId: string, data: AddOrderItemsRequest) =>
-    post<AddOrderItemsResponse>(`/orders/${tableId}/items`, data),
+  addItems: async (tableId: string, data: AddOrderItemsRequest): Promise<AddOrderItemsResponse> => {
+    const raw = await post<AddOrderItemsResponse>(`/orders/${tableId}/items`, data);
+    return {
+      ...raw,
+      addedItems: (raw.addedItems ?? []).map((row) => mapOrderLine(row)).filter((row) => row.id.length > 0),
+    };
+  },
+  updateItem: (tableId: string, itemId: string, data: UpdateOrderItemRequest) =>
+    patch<OrderItem>(`/orders/${tableId}/items/${encodeURIComponent(itemId)}`, data),
   voidItem: (tableId: string, itemId: string, data: VoidOrderItemRequest) =>
-    patch<{ id: string; status: string }>(`/orders/${tableId}/items/${itemId}/void`, data),
+    patch<{ id: string; status: string }>(`/orders/${tableId}/items/${encodeURIComponent(itemId)}/void`, data),
   clear: (tableId: string) => del<{ message: string }>(`/orders/${tableId}`),
   getDetails: async (orderId: string) => {
     const raw = await get<Record<string, unknown>>(`/orders/details/${encodeURIComponent(orderId)}`);

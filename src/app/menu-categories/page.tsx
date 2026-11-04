@@ -349,7 +349,7 @@ export default function MenuCategoriesPage() {
                     {editingCategory ? 'Edit Category' : 'Add Category'}
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    POST /api/menu/categories
+                    {editingCategory ? 'Update category details' : 'Create a food or drink category'}
                   </p>
                 </div>
                 <button

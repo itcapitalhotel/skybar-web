@@ -14,7 +14,7 @@ import { toast } from 'sonner';
 interface MenuOverlayProps {
   table: TableData;
   onClose: () => void;
-  onAddItems: (tableId: string, items: OrderItem[]) => void;
+  onAddItems: (tableId: string, items: OrderItem[]) => void | Promise<void>;
   showAll?: boolean;
   tableNote?: string;
 }
@@ -239,9 +239,11 @@ export default function MenuOverlay({
       };
     });
     try {
-      onAddItems(table.id, newItems);
+      await onAddItems(table.id, newItems);
       setCart([]);
       onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not send the order');
     } finally {
       setSubmitting(false);
     }
