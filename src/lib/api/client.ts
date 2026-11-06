@@ -17,6 +17,7 @@ import type {
   UpdateOrderItemRequest, UpdateClosedOrderRequest, VoidOrderItemRequest, VoidReportLine,
   ApiMenuItem, MenuCategory, MenuItem, CreateMenuCategoryRequest, UpdateMenuCategoryRequest,
   ProcessPaymentRequest, ProcessPaymentResponse, ReceiptResponse, PrintReceiptRequest, PrintReceiptResponse,
+  PrintSplitReceiptRequest, PrintSplitReceiptResponse,
   SplitPaymentRequest, SplitPaymentResponse,
   ShiftSummary, OpenShiftRequest, CloseShiftRequest, CloseShiftResponse,
   HourlyRevenue, RecentTransaction, DrawerReconcileRequest, DrawerReconcileResponse,
@@ -441,6 +442,9 @@ export const paymentsApi = {
 export const receiptsApi = {
   /** Guest bill before payment (`tableId`) or reprint after payment (`paymentId`). */
   print: (data: PrintReceiptRequest) => post<PrintReceiptResponse>('/receipts/print', data),
+  /** Unpaid split bill checks — one slip per guest; does not create payments. */
+  printSplit: (data: PrintSplitReceiptRequest) =>
+    post<PrintSplitReceiptResponse>('/receipts/print-split', data),
   get: (paymentId: string) =>
     get<ReceiptResponse>(`/receipts/${encodeURIComponent(paymentId)}`),
 };

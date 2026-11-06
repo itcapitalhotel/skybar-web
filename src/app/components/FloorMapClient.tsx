@@ -963,6 +963,10 @@ export default function FloorMapClient() {
             tableLabel={selectedTable.label}
             guestCount={Math.max(1, selectedTable.guests ?? 1)}
             onSplitComplete={() => void handleSplitComplete()}
+            onBillCheckPrinted={() => {
+              void fetchTables({ silent: true });
+              if (selectedTable) void fetchOrderForTable(selectedTable.id);
+            }}
           />
           <TransferTableModal
             isOpen={transferOpen}

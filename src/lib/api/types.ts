@@ -634,6 +634,45 @@ export interface PrintReceiptResponse {
   receiptPrintMessage?: string;
 }
 
+/** One guest share for unpaid split bill checks — no payment method/amount. */
+export interface PrintSplitReceiptLine {
+  guestLabel: string;
+  itemIds: string[];
+  tip?: number;
+}
+
+/** POST /api/receipts/print-split — print unpaid bill checks per guest (no payments). */
+export interface PrintSplitReceiptRequest {
+  tableId: string;
+  staffId?: string;
+  splits: PrintSplitReceiptLine[];
+}
+
+export interface PrintSplitReceiptGuestResult {
+  guestLabel: string;
+  splitIndex: number;
+  splitCount: number;
+  subtotal: number;
+  serviceCharge: number;
+  vat: number;
+  tip: number;
+  total: number;
+  receipt?: ReceiptResponse;
+  receiptPrinted?: boolean;
+  receiptPrintMessage?: string;
+}
+
+export interface PrintSplitReceiptResponse {
+  tableId: string;
+  orderId?: string;
+  tableStatus?: string;
+  splits: PrintSplitReceiptGuestResult[];
+  receiptPrinter?: ReceiptPrinterTarget | null;
+  receiptsPrinted?: number;
+  receiptsRequested?: number;
+  receiptPrintMessage?: string;
+}
+
 export interface SplitPaymentLine {
   guestLabel: string;
   /** Required — each split must include at least one order line id */

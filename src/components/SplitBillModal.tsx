@@ -1,11 +1,11 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { X, Users, SplitSquareHorizontal, Check, Minus, Plus } from 'lucide-react';
+import { X, Users, SplitSquareHorizontal, Check, Minus, Plus, Printer } from 'lucide-react';
 import { toast } from 'sonner';
-import { ordersApi, paymentsApi } from '@/lib/api/client';
+import { ordersApi, paymentsApi, receiptsApi } from '@/lib/api/client';
 import { getAuthUser } from '@/lib/api/config';
-import type { PaymentMethod, SplitPaymentLine } from '@/lib/api/types';
+import type { PaymentMethod, PrintSplitReceiptLine, SplitPaymentLine } from '@/lib/api/types';
 import {
   explodeItemsToUnits,
   isValidItemPartition,
@@ -35,6 +35,8 @@ interface SplitBillModalProps {
   tableLabel?: string;
   guestCount?: number;
   onSplitComplete?: () => void;
+  /** After unpaid split bill checks print (table → bill) — refresh floor, keep modal open */
+  onBillCheckPrinted?: () => void;
 }
 
 type SplitMode = 'equal' | 'byitem' | 'amount';
@@ -173,6 +175,7 @@ export default function SplitBillModal({
   tableLabel,
   guestCount = 1,
   onSplitComplete,
+  onBillCheckPrinted,
 }: SplitBillModalProps) {
   const [mode, setMode] = useState<SplitMode>('equal');
   const [splitCount, setSplitCount] = useState(2);
@@ -182,6 +185,7 @@ export default function SplitBillModal({
   const [guestCardNames, setGuestCardNames] = useState<CardBrand[]>(['Visa', 'Visa']);
   const [guestCardNumbers, setGuestCardNumbers] = useState<string[]>(['', '']);
   const [processing, setProcessing] = useState(false);
+  const [printingCheck, setPrintingCheck] = useState(false);
 
   const displayTable = tableLabel ?? tableId;
   const perPerson = total / splitCount;
@@ -379,32 +383,132 @@ export default function SplitBillModal({
     };
   };
 
-  const handleConfirm = async () => {
-    const lineItems = items.map(it => ({ id: it.id, qty: it.qty, price: it.price }));
-    const allIds = lineItems.map(it => it.id);
-
+  /** Shared validation for print-check and pay (partition rules). */
+  const validateSplitSetup = (): boolean => {
     if (items.length === 0) {
       toast.error('No items to split');
-      return;
+      return false;
     }
-
+    if (splitCount < MIN_WAYS) {
+      toast.error(`Split needs at least ${MIN_WAYS} guests`);
+      return false;
+    }
     if (mode === 'byitem') {
       const unassigned = splitUnits.filter((unit) => !assignments[unit.key]);
       if (unassigned.length > 0) {
         toast.error('Assign every item unit to a guest');
-        return;
+        return false;
       }
     }
-
     if ((mode === 'equal' || mode === 'amount') && splitCount > items.length) {
       toast.error(`Use at most ${items.length} ways (${items.length} line items on the check)`);
+      return false;
+    }
+    if (mode === 'amount' && Math.abs(amountDelta) > 0.02) {
+      toast.error(`Split amounts must equal $${total.toFixed(2)} (currently $${amountSum.toFixed(2)})`);
+      return false;
+    }
+    return true;
+  };
+
+  /**
+   * Build guest → itemIds partition for unpaid bill checks (and pay).
+   * Amounts/methods are not required for print-split.
+   */
+  const resolvePrintSplits = async (staffId: string): Promise<PrintSplitReceiptLine[] | null> => {
+    const lineItems = items.map((it) => ({ id: it.id, qty: it.qty, price: it.price }));
+    const allIds = lineItems.map((it) => it.id);
+    let splits: PrintSplitReceiptLine[] = [];
+
+    if (mode === 'equal') {
+      const itemGroups = partitionItemsEvenly(lineItems, splitCount);
+      splits = itemGroups.map((ids, i) => ({
+        guestLabel: `Guest ${i + 1}`,
+        itemIds: ids,
+        tip: 0,
+      })).filter((s) => s.itemIds.length > 0);
+    } else if (mode === 'amount') {
+      const active = guestAmounts
+        .map((a, i) => ({ amount: Math.round(a * 100) / 100, guestIndex: i }))
+        .filter((x) => x.amount > 0);
+      const itemGroups = partitionItemsByAmounts(lineItems, active.map((x) => x.amount));
+      splits = active.map((row, idx) => ({
+        guestLabel: `Guest ${row.guestIndex + 1}`,
+        itemIds: itemGroups[idx] ?? [],
+        tip: 0,
+      })).filter((s) => s.itemIds.length > 0);
+    } else {
+      const guestItemIds = await materializeByItemAssignments(splitUnits, staffId);
+      splits = Array.from({ length: splitCount }).map((_, i) => {
+        const guestNum = i + 1;
+        return {
+          guestLabel: `Guest ${guestNum}`,
+          itemIds: [...new Set(guestItemIds.get(guestNum) ?? [])],
+          tip: 0,
+        };
+      }).filter((s) => s.itemIds.length > 0);
+    }
+
+    if (splits.length < MIN_WAYS) {
+      toast.error(`Need at least ${MIN_WAYS} guests with items`);
+      return null;
+    }
+
+    const partitionedIds = splits.flatMap((s) => s.itemIds);
+    const expectedIds = mode === 'byitem' ? partitionedIds : allIds;
+    if (mode !== 'byitem' && !isValidItemPartition(expectedIds, splits.map((s) => s.itemIds))) {
+      toast.error('Each guest needs at least one item, and every item must be assigned once');
+      return null;
+    }
+    if (mode === 'byitem' && !isValidItemPartition(partitionedIds, splits.map((s) => s.itemIds))) {
+      toast.error('Each guest needs at least one item, and every item must be assigned once');
+      return null;
+    }
+
+    return splits;
+  };
+
+  const handlePrintBillCheck = async () => {
+    if (!validateSplitSetup()) return;
+    const staffId = getAuthUser()?.id;
+    if (!staffId) {
+      toast.error('Sign in again to print bill checks');
       return;
     }
 
-    if (mode === 'amount' && Math.abs(amountDelta) > 0.02) {
-      toast.error(`Split amounts must equal $${total.toFixed(2)} (currently $${amountSum.toFixed(2)})`);
-      return;
+    setPrintingCheck(true);
+    try {
+      const splits = await resolvePrintSplits(staffId);
+      if (!splits) return;
+
+      const result = await receiptsApi.printSplit({
+        tableId,
+        staffId,
+        splits,
+      });
+
+      const printed = Number(result.receiptsPrinted) || 0;
+      const requested = Number(result.receiptsRequested) || splits.length;
+      if (printed > 0 && printed === requested) {
+        toast.success(result.receiptPrintMessage || `${printed} split bill checks printed`);
+      } else if (printed > 0) {
+        toast.error(result.receiptPrintMessage || `Only ${printed}/${requested} bill checks printed`);
+      } else {
+        toast.error(result.receiptPrintMessage || 'Bill checks sent but printer did not confirm');
+      }
+      onBillCheckPrinted?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to print split bill checks');
+    } finally {
+      setPrintingCheck(false);
     }
+  };
+
+  const handleConfirm = async () => {
+    const lineItems = items.map(it => ({ id: it.id, qty: it.qty, price: it.price }));
+    const allIds = lineItems.map(it => it.id);
+
+    if (!validateSplitSetup()) return;
 
     setProcessing(true);
     try {
@@ -718,16 +822,28 @@ export default function SplitBillModal({
           )}
         </div>
 
-        <div className="p-5 border-t border-border">
+        <div className="p-5 border-t border-border space-y-2">
+          <button
+            type="button"
+            onClick={() => void handlePrintBillCheck()}
+            disabled={processing || printingCheck}
+            className="w-full rounded-xl py-3 font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-amber-400 bg-amber-500/15 border border-amber-500/25 hover:bg-amber-500/25 hover:border-amber-500/40 transition-all"
+          >
+            <Printer size={16} />
+            {printingCheck ? 'Printing…' : 'Print Bill Check'}
+          </button>
           <button
             type="button"
             onClick={() => void handleConfirm()}
-            disabled={processing}
+            disabled={processing || printingCheck}
             className="w-full btn-primary rounded-xl py-3 font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
           >
             <Check size={16} />
-            {processing ? 'Processing...' : 'Confirm Split & Print Receipts'}
+            {processing ? 'Processing…' : 'Confirm Split & Pay'}
           </button>
+          <p className="text-[10px] text-muted-foreground text-center leading-relaxed">
+            Print unpaid checks for guests first, then collect payment when ready.
+          </p>
         </div>
       </div>
     </div>
