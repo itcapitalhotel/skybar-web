@@ -4,7 +4,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { X, ArrowLeftRight, Check, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TableData } from '@/app/components/floorData';
-import { tablesApi } from '@/lib/api/client';
+import { tablesApi, zonesApi } from '@/lib/api/client';
+import type { ZoneData } from '@/lib/api/types';
+import { findZone } from '@/lib/zoneResolve';
 import { getAuthUser } from '@/lib/api/config';
 
 interface TransferTableModalProps {
@@ -12,6 +14,7 @@ interface TransferTableModalProps {
   onClose: () => void;
   sourceTable: TableData;
   tables: TableData[];
+  zones?: ZoneData[];
   onTransferred?: (targetTableId: string) => void;
 }
 
@@ -20,10 +23,31 @@ export default function TransferTableModal({
   onClose,
   sourceTable,
   tables,
+  zones: zonesProp,
   onTransferred,
 }: TransferTableModalProps) {
   const [targetId, setTargetId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [zones, setZones] = useState<ZoneData[]>(zonesProp ?? []);
+
+  useEffect(() => {
+    if (zonesProp && zonesProp.length > 0) {
+      setZones(zonesProp);
+      return;
+    }
+    if (!isOpen) return;
+    let cancelled = false;
+    zonesApi.list()
+      .then((list) => {
+        if (!cancelled) setZones(list);
+      })
+      .catch(() => {
+        if (!cancelled) setZones([]);
+      });
+    return () => { cancelled = true; };
+  }, [zonesProp, isOpen]);
+
+  const zoneLabel = (zoneId: string) => findZone(zones, zoneId)?.label || zoneId || 'Zone';
 
   const destinations = useMemo(
     () =>
@@ -92,6 +116,7 @@ export default function TransferTableModal({
               <h3 className="text-base font-semibold text-foreground">Change table</h3>
               <p className="text-xs text-muted-foreground">
                 Move open check from <span className="text-foreground font-medium">{sourceTable.label}</span>
+                <span className="text-muted-foreground"> · {zoneLabel(sourceTable.zone)}</span>
                 {sourceTable.guests > 0 && (
                   <span> · {sourceTable.guests} guest{sourceTable.guests === 1 ? '' : 's'}</span>
                 )}
@@ -134,8 +159,8 @@ export default function TransferTableModal({
                 >
                   <div>
                     <p className="text-sm font-semibold">{t.label}</p>
-                    <p className="text-xs text-muted-foreground capitalize">
-                      {t.zone} · {t.status} · seats {t.capacity}
+                    <p className="text-xs text-muted-foreground">
+                      {zoneLabel(t.zone)} · {t.status} · seats {t.capacity}
                     </p>
                   </div>
                   {targetId === t.id && <Check size={16} className="text-primary flex-shrink-0" />}

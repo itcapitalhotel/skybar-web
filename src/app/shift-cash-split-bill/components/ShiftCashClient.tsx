@@ -311,7 +311,15 @@ export default function ShiftCashClient() {
         <SplitBillModal
           isOpen={splitOpen}
           onClose={() => setSplitOpen(false)}
-          items={splitItems.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: i.unitPrice }))}
+          items={splitItems.map(i => ({
+            id: i.id,
+            name: i.name,
+            qty: i.qty,
+            price: i.unitPrice,
+            menuItemId: i.menuItemId,
+            size: i.size,
+            notes: i.notes,
+          }))}
           total={splitTotal}
           tableId={splitTable.id}
           tableLabel={splitTable.label}

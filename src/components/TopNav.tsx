@@ -57,9 +57,8 @@ export default function TopNav({ onLockTerminal }: TopNavProps) {
         <div className="flex items-center gap-2 md:gap-3 min-w-0">
           <div className="flex items-center gap-2">
             <AppLogo size={28} />
-            <div className="hidden sm:block">
-              <span className="font-semibold text-sm text-foreground leading-tight block">SkyBar</span>
-              <span className="text-xs text-muted-foreground leading-tight block">Rooftop Lounge</span>
+            <div className="hidden sm:block shrink-0">
+              <span className="font-semibold text-sm text-foreground leading-tight block whitespace-nowrap">NAKNAK POS</span>
             </div>
           </div>
 

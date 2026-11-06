@@ -330,6 +330,8 @@ export interface TableOrder {
   /** Server order id (e.g. "15") — store from GET/POST, not client-generated */
   orderId?: string;
   guestCount?: number;
+  /** Shared note copied onto new lines that do not have their own note */
+  note?: string;
   items: OrderItem[];
   subtotal: number;
   serviceCharge: number;
@@ -364,12 +366,16 @@ export interface AddOrderItemsRequest {
     unitPrice: number;
     categoryId?: string;
     size?: string;
+    /** Line note. Replaces the order note for this item only. */
+    note?: string;
     notes?: string;
   }>;
   /** Staff user id (e.g. u2) — NOT display name */
   staff: string;
   /** Party size — required when opening/seating; send on kitchen send */
   guestCount?: number;
+  /** Printed under every new item that has no line note of its own */
+  note?: string;
 }
 
 export interface CategoryPrintJobLine {
@@ -395,6 +401,7 @@ export type CategoryPrintJob = KitchenPrintJob;
 
 export interface AddOrderItemsResponse {
   orderId?: string;
+  note?: string;
   addedItems: OrderItem[];
   kdsTicketId: string;
   guestCount?: number;
@@ -405,6 +412,22 @@ export interface AddOrderItemsResponse {
 
 export interface UpdateOrderItemRequest {
   qty: number;
+  /** Replaces this line's note. Send an empty string to clear it. Omit to keep the current note. */
+  notes?: string;
+}
+
+/** PATCH /orders/{orderId} — send only the fields that change. The order stays paid. */
+export interface UpdateClosedOrderRequest {
+  method?: 'cash' | 'card' | 'qr' | 'room';
+  cardName?: string | null;
+  cardNumber?: string | null;
+  tip?: number | null;
+  cashTendered?: number | null;
+  roomNumber?: string | null;
+  note?: string | null;
+  guestCount?: number;
+  /** Required when the bill was split. */
+  paymentId?: string;
 }
 
 export interface VoidOrderItemRequest {
@@ -570,6 +593,45 @@ export interface ProcessPaymentResponse {
 /** GET /api/receipts/{paymentId} — payment fields plus line items for preview. */
 export interface ReceiptResponse extends ProcessPaymentResponse {
   items?: OrderItem[];
+}
+
+/**
+ * POST /api/receipts/print
+ * - Guest bill before payment: send `tableId` (+ optional discount/tip/method fields)
+ * - Reprint after payment: send `paymentId`
+ */
+export interface PrintReceiptRequest {
+  tableId?: string;
+  paymentId?: string;
+  method?: PaymentMethod;
+  tip?: number | null;
+  discountTotal?: number | null;
+  discountFood?: number | null;
+  discountDrink?: number | null;
+  discountTotalPercent?: number | null;
+  discountFoodPercent?: number | null;
+  discountDrinkPercent?: number | null;
+  cashTendered?: number | null;
+  roomNumber?: string | null;
+  cardName?: string | null;
+  cardNumber?: string | null;
+  staffId?: string | null;
+  foodSubtotal?: number | null;
+  drinkSubtotal?: number | null;
+}
+
+export interface ReceiptPrinterTarget {
+  printerIp?: string;
+  printerPort?: number;
+  name?: string;
+  zoneId?: string;
+}
+
+export interface PrintReceiptResponse {
+  receipt?: ReceiptResponse;
+  receiptPrinter?: ReceiptPrinterTarget | null;
+  receiptPrinted?: boolean;
+  receiptPrintMessage?: string;
 }
 
 export interface SplitPaymentLine {
@@ -806,11 +868,39 @@ export interface AnalyticsTopItem {
 }
 
 export interface AnalyticsTableTurnover {
+  zoneId?: string;
   zone: string;
   avgMinutes: number;
   turns: number;
   revenue: number;
 }
+
+/** Dated zone totals from /analytics/summary or /analytics/zone-revenue */
+export interface AnalyticsZoneRevenue {
+  zoneId: string;
+  zone: string;
+  revenue: number;
+  orders: number;
+  tablesWithSales: number;
+}
+
+export interface AnalyticsRevenueSeriesZone {
+  zoneId: string;
+  zone: string;
+  revenue: number;
+  orders: number;
+}
+
+/** Bucket from GET /analytics/revenue-series */
+export interface AnalyticsRevenueSeriesPoint {
+  key: string;
+  label: string;
+  revenue: number;
+  orders: number;
+  byZone?: AnalyticsRevenueSeriesZone[];
+}
+
+export type AnalyticsGranularity = 'hour' | 'day' | 'week' | 'month' | 'year';
 
 export interface AnalyticsStaffPerformance {
   staffId: string;
@@ -828,6 +918,10 @@ export interface AnalyticsTransaction {
   orderId?: string;
   tableId: string;
   tableLabel: string;
+  zoneId?: string;
+  zoneLabel?: string;
+  /** Some backends send zone slug/label as `zone` */
+  zone?: string;
   amount: number;
   method: 'Cash' | 'Card' | 'QR' | 'Room' | string;
   /** Close / pay time — same as closedAt when backend sends it */
@@ -1038,12 +1132,22 @@ export interface AnalyticsSummary {
   topItems: AnalyticsTopItem[];
   tableTurnover: AnalyticsTableTurnover[];
   staffPerformance: AnalyticsStaffPerformance[];
+  /** Dated tender mix — prefer over client txn aggregation */
+  paymentBreakdown?: PaymentBreakdown[];
+  /** Dated zone totals — one row per active zone (may include $0) */
+  zoneRevenue?: AnalyticsZoneRevenue[];
 }
 
 export interface AnalyticsQueryParams {
   range?: AnalyticsRange;
   from?: string;
   to?: string;
+  /** IANA timezone; backend defaults to venue config (Asia/Bangkok) */
+  timezone?: string;
+  /** Optional zone filter */
+  zoneId?: string;
+  /** Series bucket size for revenue-series / hourly-revenue */
+  granularity?: AnalyticsGranularity;
   limit?: number;
   staffId?: string;
 }
@@ -1096,6 +1200,8 @@ export interface VenueConfig {
   vatRate: number | string;
   currency: string;
   currencySymbol: string;
+  /** IANA venue timezone — e.g. Asia/Bangkok */
+  timezone?: string;
   printerIp: string;
   printerPort: number | string;
   houseRules: string;

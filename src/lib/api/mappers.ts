@@ -23,10 +23,8 @@ export function mapMenuItems(items: ApiMenuItem[]): MenuItem[] {
 }
 
 export function zoneToMeta(zone: ZoneData): ZoneMeta {
-  const id = zone.id.toLowerCase();
-  const zoneKey = (['vip', 'bar', 'terrace', 'cabana'].includes(id) ? id : 'bar') as ZoneMeta['id'];
   return {
-    id: zoneKey,
+    id: zone.id,
     label: zone.label,
     color: zone.color,
     accentColor: `${zone.color}14`,

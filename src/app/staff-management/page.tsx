@@ -4,9 +4,11 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft, Plus, Search, Shield, Edit2, Trash2, X, CheckCircle2,
-  Eye, EyeOff, KeyRound, Users, UserCheck, UserX, Clock
+  KeyRound, Users, UserCheck, UserX, Clock
 } from 'lucide-react';
-import { usersApi } from '@/lib/api/client';
+import OnScreenField from '@/components/OnScreenField';
+import PinPad from '@/components/PinPad';
+import { staffApi, usersApi } from '@/lib/api/client';
 import type { StaffUser, UserRole, CreateUserRequest, UpdateUserRequest } from '@/lib/api/types';
 
 const ROLE_CONFIG: Record<UserRole, { color: string; bg: string; border: string; icon: string; label: string }> = {
@@ -29,14 +31,17 @@ interface StaffFormData {
   email: string;
   role: UserRole;
   terminalId: string;
-  password: string;
   pin: string;
   confirmPin: string;
 }
 
 const EMPTY_FORM: StaffFormData = {
-  name: '', email: '', role: 'Bartender', terminalId: '', password: '', pin: '', confirmPin: ''
+  name: '', email: '', role: 'Bartender', terminalId: '', pin: '', confirmPin: ''
 };
+
+function isValidPin(pin: string): boolean {
+  return /^\d{4,6}$/.test(pin);
+}
 
 function PinDots({ value, max = 4 }: { value: string; max?: number }) {
   return (
@@ -63,12 +68,11 @@ export default function StaffManagementPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<StaffUser | null>(null);
   const [form, setForm] = useState<StaffFormData>(EMPTY_FORM);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showPin, setShowPin] = useState(false);
-  const [pinStep, setPinStep] = useState<'password' | 'pin'>('password');
+  const [pinStep, setPinStep] = useState<'account' | 'pin'>('account');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [pinError, setPinError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,96 +92,109 @@ export default function StaffManagementPage() {
   const openCreate = () => {
     setEditingUser(null);
     setForm(EMPTY_FORM);
-    setPinStep('password');
+    setPinStep('account');
     setPinError('');
     setDrawerOpen(true);
   };
 
   const openEdit = (user: StaffUser) => {
     setEditingUser(user);
-    setForm({ name: user.name, email: user.email, role: user.role, terminalId: user.terminalId === '—' ? '' : user.terminalId, password: '', pin: '', confirmPin: '' });
-    setPinStep('password');
+    setForm({
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      terminalId: user.terminalId === '—' ? '' : user.terminalId,
+      pin: '',
+      confirmPin: '',
+    });
+    setPinStep('account');
     setPinError('');
     setDrawerOpen(true);
   };
 
-  const handlePinInput = (digit: string, field: 'pin' | 'confirmPin') => {
-    const current = form[field];
-    if (current.length < 4) {
-      setForm(prev => ({ ...prev, [field]: current + digit }));
-      setPinError('');
-    }
+  const openSetPin = (user: StaffUser) => {
+    setEditingUser(user);
+    setForm({
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      terminalId: user.terminalId === '—' ? '' : user.terminalId,
+      pin: '',
+      confirmPin: '',
+    });
+    setPinStep('pin');
+    setPinError('');
+    setDrawerOpen(true);
   };
 
-  const handlePinBackspace = (field: 'pin' | 'confirmPin') => {
-    setForm(prev => ({ ...prev, [field]: prev[field].slice(0, -1) }));
-    setPinError('');
-  };
+  const pinField: 'pin' | 'confirmPin' = form.pin.length < 4 ? 'pin' : 'confirmPin';
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.email.trim()) {
       showToast('Name and email are required', 'error');
       return;
     }
-    if (!editingUser && !form.password.trim()) {
-      showToast('Password is required for new staff', 'error');
-      return;
-    }
-    if (form.pin && form.pin !== form.confirmPin) {
-      setPinError('PINs do not match');
-      return;
-    }
-    if (form.pin && form.pin.length !== 4) {
-      setPinError('PIN must be exactly 4 digits');
-      return;
+
+    const pinEntered = form.pin.length > 0 || form.confirmPin.length > 0;
+    // New staff always need a login PIN. Existing staff only validate when a PIN is typed.
+    if (!editingUser || pinEntered) {
+      if (!isValidPin(form.pin)) {
+        setPinError('PIN must be 4 digits');
+        setPinStep('pin');
+        return;
+      }
+      if (form.pin !== form.confirmPin) {
+        setPinError('PINs do not match');
+        setPinStep('pin');
+        return;
+      }
     }
 
-    if (editingUser) {
-      const payload: UpdateUserRequest = {
-        name: form.name,
-        email: form.email,
-        role: form.role,
-        terminalId: form.terminalId || undefined,
-      };
-      try {
-        const updated = await usersApi.update(editingUser.id, payload);
-        setStaff(prev => prev.map(u => u.id === editingUser.id ? updated : u));
-      } catch {
-        setStaff(prev => prev.map(u => u.id === editingUser.id
-          ? { ...u, name: form.name, email: form.email, role: form.role, terminalId: form.terminalId || '—' }
-          : u
-        ));
-      }
-      showToast(`${form.name} updated`);
-    } else {
-      const payload: CreateUserRequest = {
-        name: form.name,
-        email: form.email,
-        role: form.role,
-        terminalId: form.terminalId || undefined,
-        password: form.password,
-      };
-      try {
-        const created = await usersApi.create(payload);
-        setStaff(prev => [created, ...prev]);
-      } catch {
-        const newUser: StaffUser = {
-          id: `u${Date.now()}`,
+    setSaving(true);
+    try {
+      if (editingUser) {
+        const payload: UpdateUserRequest = {
           name: form.name,
           email: form.email,
           role: form.role,
-          status: 'inactive',
-          terminalId: form.terminalId || '—',
-          avatar: form.name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2),
-          joinDate: new Date().toISOString().split('T')[0],
-          lastActive: 'Never',
-          shiftsThisWeek: 0,
+          terminalId: form.terminalId || undefined,
         };
-        setStaff(prev => [newUser, ...prev]);
+        const updated = await usersApi.update(editingUser.id, payload);
+        if (isValidPin(form.pin)) {
+          // setPin syncs StaffPin + passwordHash so login works with this PIN
+          await staffApi.setPin(editingUser.id, { pin: form.pin });
+        }
+        setStaff(prev => prev.map(u => u.id === editingUser.id
+          ? { ...updated, hasPin: isValidPin(form.pin) ? true : updated.hasPin }
+          : u
+        ));
+        showToast(isValidPin(form.pin) ? `${form.name} updated · PIN set` : `${form.name} updated`);
+      } else {
+        // Create with PIN as password so StaffPin and passwordHash stay aligned
+        const payload: CreateUserRequest = {
+          name: form.name,
+          email: form.email,
+          role: form.role,
+          terminalId: form.terminalId || undefined,
+          password: form.pin,
+        };
+        const created = await usersApi.create(payload);
+        // Belt-and-suspenders: ensure StaffPin matches even on older API builds
+        try {
+          await staffApi.setPin(created.id, { pin: form.pin });
+        } catch {
+          /* create already syncs StaffPin on fixed API */
+        }
+        setStaff(prev => [{ ...created, hasPin: true }, ...prev]);
+        showToast(`${form.name} created — they can log in with their PIN`);
       }
-      showToast(`${form.name} created`);
+      setDrawerOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Save failed';
+      showToast(message, 'error');
+    } finally {
+      setSaving(false);
     }
-    setDrawerOpen(false);
   };
 
   const handleDelete = async (id: string) => {
@@ -200,8 +217,6 @@ export default function StaffManagementPage() {
     active: staff.filter(u => u.status === 'active').length,
     inactive: staff.filter(u => u.status === 'inactive').length,
   };
-
-  const PIN_DIGITS = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
 
   return (
     <div className="min-h-screen bg-background text-foreground" style={{ fontFamily: 'DM Sans, sans-serif' }}>
@@ -346,10 +361,10 @@ export default function StaffManagementPage() {
                       <Edit2 size={12} /> Edit
                     </button>
                     <button
-                      onClick={() => { setEditingUser(user); setForm({ ...EMPTY_FORM, name: user.name, email: user.email, role: user.role, terminalId: user.terminalId === '—' ? '' : user.terminalId }); setPinStep('pin'); setDrawerOpen(true); }}
+                      onClick={() => openSetPin(user)}
                       className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-medium transition-all bg-amber-500/10 border border-amber-500/25 text-amber-400 hover:bg-amber-500/20"
                     >
-                      <KeyRound size={12} /> Set PIN
+                      <KeyRound size={12} /> {user.hasPin ? 'Reset PIN' : 'Set PIN'}
                     </button>
                     <button
                       onClick={() => setDeleteConfirm(user.id)}
@@ -396,47 +411,43 @@ export default function StaffManagementPage() {
 
             {/* Step Tabs */}
             <div className="flex gap-1 px-5 pt-4">
-              {(['password', 'pin'] as const).map(step => (
+              {(['account', 'pin'] as const).map(step => (
                 <button
                   key={step}
+                  type="button"
                   onClick={() => setPinStep(step)}
                   className={`flex-1 py-2 rounded-xl text-xs font-medium transition-all border ${
                     pinStep === step
-                      ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' :'bg-muted/20 text-muted-foreground border-border hover:border-amber-500/20'
+                      ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                      : 'bg-muted/20 text-muted-foreground border-border hover:border-amber-500/20'
                   }`}
                 >
-                  {step === 'password' ? '📋 Account Info' : '🔑 PIN Setup'}
+                  {step === 'account' ? '📋 Account Info' : '🔑 Login PIN'}
                 </button>
               ))}
             </div>
 
-            <div className="flex-1 px-5 py-4 space-y-4">
-              {pinStep === 'password' ? (
+            <div className="flex-1 px-5 py-4 pb-28 space-y-4 overflow-y-auto">
+              {pinStep === 'account' ? (
                 <>
-                  {/* Name */}
-                  <div>
-                    <label className="block text-xs font-medium text-muted-foreground mb-1.5">Full Name *</label>
-                    <input
-                      value={form.name}
-                      onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                      placeholder="e.g. Jordan Lee"
-                      className="w-full px-3 py-2.5 rounded-xl text-sm bg-muted/20 border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-500/50"
-                    />
-                  </div>
+                  <OnScreenField
+                    label="Full Name"
+                    required
+                    value={form.name}
+                    onChange={(name) => setForm((p) => ({ ...p, name }))}
+                    placeholder="e.g. Jordan Lee"
+                    mode="text"
+                  />
 
-                  {/* Email */}
-                  <div>
-                    <label className="block text-xs font-medium text-muted-foreground mb-1.5">Email Address *</label>
-                    <input
-                      type="email"
-                      value={form.email}
-                      onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
-                      placeholder="staff@skybar.com"
-                      className="w-full px-3 py-2.5 rounded-xl text-sm bg-muted/20 border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-500/50"
-                    />
-                  </div>
+                  <OnScreenField
+                    label="Email Address"
+                    required
+                    value={form.email}
+                    onChange={(email) => setForm((p) => ({ ...p, email }))}
+                    placeholder="staff@skybar.com"
+                    mode="email"
+                  />
 
-                  {/* Role */}
                   <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1.5">Role *</label>
                     <div className="grid grid-cols-2 gap-2">
@@ -445,8 +456,9 @@ export default function StaffManagementPage() {
                         return (
                           <button
                             key={r}
+                            type="button"
                             onClick={() => setForm(p => ({ ...p, role: r }))}
-                            className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all border"
+                            className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all border touch-manipulation"
                             style={{
                               background: form.role === r ? rc.bg : 'rgba(100,116,139,0.06)',
                               border: `1px solid ${form.role === r ? rc.border : 'rgba(100,116,139,0.15)'}`,
@@ -460,66 +472,53 @@ export default function StaffManagementPage() {
                     </div>
                   </div>
 
-                  {/* Terminal ID */}
-                  <div>
-                    <label className="block text-xs font-medium text-muted-foreground mb-1.5">Terminal ID <span className="text-muted-foreground/60">(optional)</span></label>
-                    <input
-                      value={form.terminalId}
-                      onChange={e => setForm(p => ({ ...p, terminalId: e.target.value }))}
-                      placeholder="e.g. POS-05"
-                      className="w-full px-3 py-2.5 rounded-xl text-sm bg-muted/20 border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-500/50"
-                    />
-                  </div>
+                  <OnScreenField
+                    label="Terminal ID (optional)"
+                    value={form.terminalId}
+                    onChange={(terminalId) => setForm((p) => ({ ...p, terminalId }))}
+                    placeholder="e.g. POS-05"
+                    mode="text"
+                  />
 
-                  {/* Password */}
-                  {!editingUser && (
-                    <div>
-                      <label className="block text-xs font-medium text-muted-foreground mb-1.5">Password *</label>
-                      <div className="relative">
-                        <input
-                          type={showPassword ? 'text' : 'password'}
-                          value={form.password}
-                          onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
-                          placeholder="Min. 8 characters"
-                          className="w-full px-3 py-2.5 pr-10 rounded-xl text-sm bg-muted/20 border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-500/50"
-                        />
-                        <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                          {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  <p className="text-[11px] text-muted-foreground rounded-xl px-3 py-2 bg-muted/15 border border-border/50">
+                    Fields use the app&apos;s built-in keyboard (works on iPad without a plugged-in keyboard). Next step sets the login PIN.
+                  </p>
 
                   <button
+                    type="button"
                     onClick={() => setPinStep('pin')}
-                    className="w-full py-3 rounded-xl text-sm font-semibold transition-all mt-2"
+                    className="w-full py-3 rounded-xl text-sm font-semibold transition-all mt-2 touch-manipulation"
                     style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.35)', color: '#f59e0b' }}
                   >
-                    Next: Set PIN →
+                    Next: Set Login PIN →
                   </button>
                 </>
               ) : (
                 <>
-                  {/* PIN Setup */}
                   <div className="text-center space-y-6 py-4">
                     <div>
                       <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-3" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)' }}>
                         <KeyRound size={24} style={{ color: '#f59e0b' }} />
                       </div>
-                      <h3 className="text-sm font-bold text-foreground">Terminal PIN</h3>
-                      <p className="text-xs text-muted-foreground mt-1">4-digit PIN for quick terminal unlock</p>
+                      <h3 className="text-sm font-bold text-foreground">Login PIN</h3>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {editingUser ? 'Resets Staff PIN and login password together' : 'Required — used to sign in on the POS login screen'}
+                      </p>
                     </div>
 
-                    {/* PIN Entry */}
                     <div className="space-y-4">
                       <div>
-                        <p className="text-xs text-muted-foreground mb-2">Enter PIN</p>
+                        <p className={`text-xs mb-2 ${pinField === 'pin' ? 'text-amber-400 font-medium' : 'text-muted-foreground'}`}>
+                          Enter PIN
+                        </p>
                         <div className="flex justify-center">
                           <PinDots value={form.pin} />
                         </div>
                       </div>
                       <div>
-                        <p className="text-xs text-muted-foreground mb-2">Confirm PIN</p>
+                        <p className={`text-xs mb-2 ${pinField === 'confirmPin' ? 'text-amber-400 font-medium' : 'text-muted-foreground'}`}>
+                          Confirm PIN
+                        </p>
                         <div className="flex justify-center">
                           <PinDots value={form.confirmPin} />
                         </div>
@@ -527,35 +526,24 @@ export default function StaffManagementPage() {
                       {pinError && <p className="text-xs text-rose-400 text-center">{pinError}</p>}
                     </div>
 
-                    {/* Numpad */}
-                    <div className="grid grid-cols-3 gap-3 max-w-[240px] mx-auto">
-                      {PIN_DIGITS.map((d, i) => (
-                        <button
-                          key={i}
-                          disabled={d === ''}
-                          onClick={() => {
-                            if (d === '⌫') {
-                              if (form.confirmPin.length > 0) handlePinBackspace('confirmPin');
-                              else handlePinBackspace('pin');
-                            } else if (form.pin.length < 4) {
-                              handlePinInput(d, 'pin');
-                            } else {
-                              handlePinInput(d, 'confirmPin');
-                            }
-                          }}
-                          className={`h-12 rounded-xl text-base font-semibold transition-all border ${
-                            d === '' ?'invisible'
-                              : d === '⌫' ?'bg-rose-500/10 border-rose-500/25 text-rose-400 hover:bg-rose-500/20' :'bg-muted/20 border-border text-foreground hover:bg-amber-500/10 hover:border-amber-500/30 hover:text-amber-400'
-                          }`}
-                        >
-                          {d}
-                        </button>
-                      ))}
+                    <div className="max-w-[260px] mx-auto">
+                      <PinPad
+                        value={form[pinField]}
+                        onChange={(next) => {
+                          setPinError('');
+                          if (pinField === 'pin') {
+                            setForm((prev) => ({ ...prev, pin: next, confirmPin: next.length < 4 ? '' : prev.confirmPin }));
+                          } else {
+                            setForm((prev) => ({ ...prev, confirmPin: next }));
+                          }
+                        }}
+                      />
                     </div>
 
                     <button
-                      onClick={() => setPinStep('password')}
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      type="button"
+                      onClick={() => setPinStep('account')}
+                      className="text-xs text-muted-foreground hover:text-foreground transition-colors touch-manipulation"
                     >
                       ← Back to account info
                     </button>
@@ -564,14 +552,19 @@ export default function StaffManagementPage() {
               )}
             </div>
 
-            {/* Save Button */}
             <div className="px-5 py-4 border-t border-border/30 sticky bottom-0" style={{ background: 'rgba(10,18,35,0.98)' }}>
               <button
+                type="button"
                 onClick={handleSave}
-                className="w-full py-3 rounded-xl text-sm font-bold transition-all"
+                disabled={saving}
+                className="w-full py-3 rounded-xl text-sm font-bold transition-all disabled:opacity-50"
                 style={{ background: 'rgba(245,158,11,0.2)', border: '1px solid rgba(245,158,11,0.4)', color: '#f59e0b' }}
               >
-                {editingUser ? 'Save Changes' : 'Create Staff Account'}
+                {saving
+                  ? 'Saving…'
+                  : editingUser
+                    ? (isValidPin(form.pin) ? 'Save & Set PIN' : 'Save Changes')
+                    : 'Create Staff Account'}
               </button>
             </div>
           </div>

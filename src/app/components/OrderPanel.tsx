@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
-import { ArrowLeftRight, Trash2, SplitSquareHorizontal, CreditCard, AlertTriangle, CheckCircle2, Clock, XCircle, Users, FileText, Minus, Plus, X } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { ArrowLeftRight, Trash2, SplitSquareHorizontal, CreditCard, AlertTriangle, CheckCircle2, Clock, XCircle, Users, FileText, Minus, Plus, X, Printer } from 'lucide-react';
 import { TableData, OrderItem, calcOrderTotal } from './floorData';
 import type { UserRole } from '@/lib/api/types';
+import { receiptsApi } from '@/lib/api/client';
+import { getAuthUser } from '@/lib/api/config';
 import { toast } from 'sonner';
 
 interface OrderPanelProps {
@@ -12,6 +14,7 @@ interface OrderPanelProps {
   role: UserRole;
   onVoidItem: (itemId: string, reason: string) => void | Promise<void>;
   onUpdateQty?: (itemId: string, qty: number) => void | Promise<void>;
+  onUpdateNote?: (itemId: string, qty: number, notes: string) => void | Promise<void>;
   onOpenSplit: () => void;
   onOpenTransfer: () => void;
   onOpenPayment: () => void;
@@ -44,6 +47,7 @@ export default function OrderPanel({
   role,
   onVoidItem,
   onUpdateQty,
+  onUpdateNote,
   onOpenSplit,
   onOpenTransfer,
   onOpenPayment,
@@ -53,6 +57,9 @@ export default function OrderPanel({
   const [voidTarget, setVoidTarget] = useState<OrderItem | null>(null);
   const [voidReason, setVoidReason] = useState('');
   const [voiding, setVoiding] = useState(false);
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
+  const [printingBill, setPrintingBill] = useState(false);
 
   if (!table) {
     return (
@@ -111,9 +118,9 @@ export default function OrderPanel({
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden">
       {/* Panel Header */}
-      <div className="px-4 py-3 border-b border-border">
+      <div className="px-4 py-3 border-b border-border flex-shrink-0">
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="min-w-0">
             <h3 className="text-sm font-bold text-foreground">{table.label}</h3>
@@ -170,8 +177,8 @@ export default function OrderPanel({
         )}
       </div>
 
-      {/* Items List */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-2 space-y-1.5">
+      {/* Items List — scrolls so totals / Pay Now stay visible */}
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-thin px-3 py-2 space-y-1.5">
         {activeItems.length === 0 ? (
           <div className="text-center py-8">
             <p className="text-xs text-muted-foreground">No items ordered yet</p>
@@ -202,9 +209,34 @@ export default function OrderPanel({
                       {statusCfg.label}
                     </span>
                   </div>
-                  {item.notes && (
+                  {item.status !== 'Voided' && onUpdateNote ? (
+                    <NoteField
+                      itemId={item.id}
+                      saved={item.notes ?? ''}
+                      draft={noteDrafts[item.id]}
+                      saving={savingNoteId === item.id}
+                      onDraft={(value) => setNoteDrafts((prev) => ({ ...prev, [item.id]: value }))}
+                      onSave={async (value) => {
+                        const next = value.trim();
+                        if (next === (item.notes ?? '').trim()) return;
+                        setSavingNoteId(item.id);
+                        try {
+                          await onUpdateNote(item.id, item.qty, next);
+                          setNoteDrafts((prev) => {
+                            const copy = { ...prev };
+                            delete copy[item.id];
+                            return copy;
+                          });
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : 'Could not save the note');
+                        } finally {
+                          setSavingNoteId(null);
+                        }
+                      }}
+                    />
+                  ) : item.notes ? (
                     <p className="text-[10px] text-amber-400/80 mt-0.5 italic">Note: {item.notes}</p>
-                  )}
+                  ) : null}
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                   {item.status !== 'Voided' && onUpdateQty ? (
@@ -257,51 +289,81 @@ export default function OrderPanel({
         )}
       </div>
 
-      {/* Financial Breakdown */}
-      <div className="px-4 py-3 border-t border-border space-y-1.5">
-        <div className="flex justify-between text-xs text-muted-foreground">
-          <span>Subtotal</span>
-          <span className="text-tabular">${subtotal.toFixed(2)}</span>
+      {/* Totals + Pay Now — pinned footer (always visible on iPad) */}
+      <div className="flex-shrink-0 border-t border-border bg-background/95 backdrop-blur-sm">
+        <div className="px-4 py-2.5 space-y-1">
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>Subtotal</span>
+            <span className="text-tabular">${subtotal.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>Service Charge (10%)</span>
+            <span className="text-tabular">${serviceCharge.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>VAT (10%)</span>
+            <span className="text-tabular">${vat.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between text-sm font-bold text-foreground pt-1.5 border-t border-border">
+            <span>Total</span>
+            <span className="text-tabular text-primary">${total.toFixed(2)}</span>
+          </div>
         </div>
-        <div className="flex justify-between text-xs text-muted-foreground">
-          <span>Service Charge (10%)</span>
-          <span className="text-tabular">${serviceCharge.toFixed(2)}</span>
-        </div>
-        <div className="flex justify-between text-xs text-muted-foreground">
-          <span>VAT (10%)</span>
-          <span className="text-tabular">${vat.toFixed(2)}</span>
-        </div>
-        <div className="flex justify-between text-sm font-bold text-foreground pt-1.5 border-t border-border">
-          <span>Total</span>
-          <span className="text-tabular text-primary">${total.toFixed(2)}</span>
-        </div>
-      </div>
 
-      {/* Action Buttons */}
-      <div className="px-3 pb-4 pt-2 space-y-2">
-        <div className="grid grid-cols-1 gap-1.5">
-          {canSplit && (
+        <div className="px-3 pb-3 pt-1 space-y-2">
+          <div className="grid grid-cols-1 gap-1.5">
+            {canSplit && (
+              <button
+                onClick={onOpenSplit}
+                disabled={activeItems.length === 0}
+                className="flex flex-col items-center gap-1 py-2 px-1 rounded-xl bg-muted/50 border border-border text-muted-foreground hover:text-foreground hover:border-cyan-500/40 transition-all text-[10px] font-medium disabled:opacity-40"
+              >
+                <SplitSquareHorizontal size={14} />
+                Split
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            disabled={activeItems.length === 0 || printingBill}
+            onClick={async () => {
+              if (!table?.id || printingBill) return;
+              setPrintingBill(true);
+              try {
+                const staffId = getAuthUser()?.id ?? undefined;
+                const result = await receiptsApi.print({
+                  tableId: table.id,
+                  staffId: staffId ?? null,
+                });
+                if (result.receiptPrinted) {
+                  toast.success('Bill check printed');
+                } else {
+                  toast.error(result.receiptPrintMessage || 'Bill check sent but printer did not confirm');
+                }
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : 'Failed to print bill check');
+              } finally {
+                setPrintingBill(false);
+              }
+            }}
+            className="w-full rounded-xl py-3 font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed text-amber-400 bg-amber-500/15 border border-amber-500/25 hover:bg-amber-500/25 hover:border-amber-500/40 transition-all"
+          >
+            <Printer size={16} />
+            {printingBill ? 'Printing…' : 'BILL CHECKED'}
+          </button>
+
+          {canPay && (
             <button
-              onClick={onOpenSplit}
+              onClick={onOpenPayment}
               disabled={activeItems.length === 0}
-              className="flex flex-col items-center gap-1 py-2 px-1 rounded-xl bg-muted/50 border border-border text-muted-foreground hover:text-foreground hover:border-cyan-500/40 transition-all text-[10px] font-medium disabled:opacity-40"
+              className="w-full btn-primary rounded-xl py-3 font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed neon-cyan"
             >
-              <SplitSquareHorizontal size={14} />
-              Split
+              <CreditCard size={16} />
+              Pay Now (${total.toFixed(2)})
             </button>
           )}
         </div>
-
-        {canPay && (
-          <button
-            onClick={onOpenPayment}
-            disabled={activeItems.length === 0}
-            className="w-full btn-primary rounded-xl py-3 font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed neon-cyan"
-          >
-            <CreditCard size={16} />
-            Pay Now (${total.toFixed(2)})
-          </button>
-        )}
       </div>
 
       {voidTarget && (
@@ -375,5 +437,46 @@ export default function OrderPanel({
         </div>
       )}
     </div>
+  );
+}
+
+function NoteField({
+  itemId,
+  saved,
+  draft,
+  saving,
+  onDraft,
+  onSave,
+}: {
+  itemId: string;
+  saved: string;
+  draft?: string;
+  saving: boolean;
+  onDraft: (value: string) => void;
+  onSave: (value: string) => void | Promise<void>;
+}) {
+  const value = draft ?? saved;
+  const latest = useRef(value);
+  latest.current = value;
+  return (
+    <input
+      type="text"
+      value={value}
+      disabled={saving}
+      aria-label={`Note for item ${itemId}`}
+      placeholder="Add a note"
+      onChange={(e) => {
+        latest.current = e.target.value;
+        onDraft(e.target.value);
+      }}
+      onBlur={() => { void onSave(latest.current); }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          (e.currentTarget as HTMLInputElement).blur();
+        }
+      }}
+      className="mt-1 w-full rounded-md border border-border bg-muted/30 px-1.5 py-1 text-[10px] text-amber-200 placeholder:text-muted-foreground/70 placeholder:not-italic focus:outline-none focus:border-amber-400/40 disabled:opacity-60"
+    />
   );
 }

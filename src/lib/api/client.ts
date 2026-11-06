@@ -14,15 +14,17 @@ import type {
   StockItem, UpdateStockCountRequest, BulkStockUpdateRequest,
   StockHistoryEntry, StockReconcileRequest, StockReconcileResponse,
   KDSTicket, KDSStatus, TableOrder, OrderItem, AddOrderItemsRequest, AddOrderItemsResponse,
-  UpdateOrderItemRequest, VoidOrderItemRequest, VoidReportLine,
+  UpdateOrderItemRequest, UpdateClosedOrderRequest, VoidOrderItemRequest, VoidReportLine,
   ApiMenuItem, MenuCategory, MenuItem, CreateMenuCategoryRequest, UpdateMenuCategoryRequest,
-  ProcessPaymentRequest, ProcessPaymentResponse, ReceiptResponse, SplitPaymentRequest, SplitPaymentResponse,
+  ProcessPaymentRequest, ProcessPaymentResponse, ReceiptResponse, PrintReceiptRequest, PrintReceiptResponse,
+  SplitPaymentRequest, SplitPaymentResponse,
   ShiftSummary, OpenShiftRequest, CloseShiftRequest, CloseShiftResponse,
   HourlyRevenue, RecentTransaction, DrawerReconcileRequest, DrawerReconcileResponse,
   DashboardKpiSummary, DashboardSummary, ZoneRevenue, TopItem, PaymentBreakdown, HourlyZoneRevenue,
   AppNotification, UnreadCountResponse,
   VenueConfig, PrinterTestResponse,
   AnalyticsSummary, AnalyticsQueryParams, AnalyticsTransaction, AnalyticsTransactionDetail,
+  AnalyticsRevenueSeriesPoint, AnalyticsZoneRevenue,
   OrderDetailsResponse,
   SetPinRequest, PinVerifyResponse,
   StaffShift, CreateShiftRequest, StaffAvailability, KdsAssignment,
@@ -110,8 +112,9 @@ export const usersApi = {
   toggleStatus: (id: string) => patch<StaffUser>(`/users/${id}/status`, { status: 'active' }),
   /** @deprecated use toggleStatus */
   setStatus: (id: string, status: string) => patch<StaffUser>(`/users/${id}/status`, { status }),
-  resetPassword: (id: string, newPassword: string) =>
-    patch<{ message: string }>(`/users/${id}/password`, { newPassword }),
+  /** Accepts 4+ char PIN/password; API syncs StaffPin + passwordHash. */
+  resetPassword: (id: string, password: string) =>
+    patch<{ message: string }>(`/users/${id}/password`, { password, newPassword: password }),
 };
 
 // ─── Staff (with PIN) ─────────────────────────────────────────────────────────
@@ -193,7 +196,12 @@ function mapOrderLine(row: unknown): OrderItem {
     qty: Number(raw.qty ?? 1),
     unitPrice: Number(raw.unitPrice ?? raw.unit_price ?? 0),
     status: (status === 'In_Prep' ? 'In Prep' : status) as OrderItem['status'],
-    notes: raw.notes != null ? String(raw.notes) : undefined,
+    notes: (() => {
+      const text = raw.notes ?? raw.note;
+      if (text == null) return undefined;
+      const trimmed = String(text).trim();
+      return trimmed || undefined;
+    })(),
     size: raw.size != null ? String(raw.size) : undefined,
   };
 }
@@ -209,6 +217,12 @@ export const ordersApi = {
       tableId: String(raw.tableId ?? tableId),
       orderId: raw.orderId != null ? String(raw.orderId) : raw.order_id != null ? String(raw.order_id) : undefined,
       guestCount: Number(raw.guestCount ?? raw.guest_count) || undefined,
+      note: (() => {
+        const text = raw.note ?? raw.orderNote ?? raw.order_note;
+        if (text == null) return undefined;
+        const trimmed = String(text).trim();
+        return trimmed || undefined;
+      })(),
       items,
       subtotal: Number(raw.subtotal ?? 0),
       serviceCharge: Number(raw.serviceCharge ?? raw.service_charge ?? 0),
@@ -223,8 +237,10 @@ export const ordersApi = {
       addedItems: (raw.addedItems ?? []).map((row) => mapOrderLine(row)).filter((row) => row.id.length > 0),
     };
   },
-  updateItem: (tableId: string, itemId: string, data: UpdateOrderItemRequest) =>
-    patch<OrderItem>(`/orders/${tableId}/items/${encodeURIComponent(itemId)}`, data),
+  updateItem: async (tableId: string, itemId: string, data: UpdateOrderItemRequest) => {
+    const raw = await patch<unknown>(`/orders/${tableId}/items/${encodeURIComponent(itemId)}`, data);
+    return mapOrderLine(raw);
+  },
   voidItem: (tableId: string, itemId: string, data: VoidOrderItemRequest) =>
     patch<{ id: string; status: string }>(`/orders/${tableId}/items/${encodeURIComponent(itemId)}/void`, data),
   clear: (tableId: string) => del<{ message: string }>(`/orders/${tableId}`),
@@ -236,7 +252,15 @@ export const ordersApi = {
       tableId: detail.tableId,
       tableLabel: detail.tableLabel,
       zoneLabel: detail.zoneLabel,
-      covers: detail.covers,
+      status: typeof raw.status === 'string' ? raw.status : undefined,
+      covers: detail.covers ?? detail.guestCount,
+      paymentId: detail.paymentId || undefined,
+      method: detail.method,
+      roomNumber: detail.roomNumber,
+      cardName: detail.cardName,
+      cardNumber: detail.cardNumber,
+      tip: detail.tip,
+      cashTendered: detail.cashTendered,
       openedAt: detail.openedAt,
       closedAt: detail.closedAt,
       staffId: detail.staffId,
@@ -260,6 +284,12 @@ export const ordersApi = {
       transfers: detail.transfers,
     } satisfies OrderDetailsResponse;
   },
+  /** Correct payment on a paid order. The order stays closed. */
+  updateClosed: (orderId: string, data: UpdateClosedOrderRequest) =>
+    patch<OrderDetailsResponse>(`/orders/${encodeURIComponent(orderId)}`, data),
+  /** Paid order returns to active. The old payment is removed. */
+  reopen: (orderId: string) =>
+    post<OrderDetailsResponse>(`/orders/${encodeURIComponent(orderId)}/reopen`),
 };
 
 // ─── Bookings ─────────────────────────────────────────────────────────────────
@@ -407,6 +437,14 @@ export const paymentsApi = {
     get<ReceiptResponse>(`/receipts/${encodeURIComponent(paymentId)}`),
 };
 
+// ─── Receipts ─────────────────────────────────────────────────────────────────
+export const receiptsApi = {
+  /** Guest bill before payment (`tableId`) or reprint after payment (`paymentId`). */
+  print: (data: PrintReceiptRequest) => post<PrintReceiptResponse>('/receipts/print', data),
+  get: (paymentId: string) =>
+    get<ReceiptResponse>(`/receipts/${encodeURIComponent(paymentId)}`),
+};
+
 // ─── Shifts ───────────────────────────────────────────────────────────────────
 export const shiftApi = {
   current: () => get<ShiftSummary>('/shifts/current'),
@@ -465,19 +503,31 @@ export const configApi = {
 };
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
+const analyticsParams = (params?: AnalyticsQueryParams) =>
+  params as Record<string, string | number | boolean | undefined>;
+
 export const analyticsApi = {
   summary: (params?: AnalyticsQueryParams) =>
-    get<AnalyticsSummary>('/analytics/summary', params as Record<string, string | number | boolean | undefined>),
+    get<AnalyticsSummary>('/analytics/summary', analyticsParams(params)),
   hourlyRevenue: (params?: AnalyticsQueryParams) =>
-    get<AnalyticsSummary['hourlyRevenue']>('/analytics/hourly-revenue', params as Record<string, string | number | boolean | undefined>),
+    get<AnalyticsSummary['hourlyRevenue']>('/analytics/hourly-revenue', analyticsParams(params)),
+  /** Dated revenue buckets — prefer over client-side txn aggregation */
+  revenueSeries: (params?: AnalyticsQueryParams) =>
+    get<AnalyticsRevenueSeriesPoint[]>('/analytics/revenue-series', analyticsParams(params)),
+  /** Dated zone totals (not live /dashboard/zone-revenue) */
+  zoneRevenue: (params?: AnalyticsQueryParams) =>
+    get<AnalyticsZoneRevenue[]>('/analytics/zone-revenue', analyticsParams(params)),
+  /** Dated payment mix (not live /dashboard/payment-breakdown) */
+  paymentBreakdown: (params?: AnalyticsQueryParams) =>
+    get<PaymentBreakdown[]>('/analytics/payment-breakdown', analyticsParams(params)),
   topItems: (params?: AnalyticsQueryParams) =>
-    get<AnalyticsSummary['topItems']>('/analytics/top-items', params as Record<string, string | number | boolean | undefined>),
+    get<AnalyticsSummary['topItems']>('/analytics/top-items', analyticsParams(params)),
   tableTurnover: (params?: AnalyticsQueryParams) =>
-    get<AnalyticsSummary['tableTurnover']>('/analytics/table-turnover', params as Record<string, string | number | boolean | undefined>),
+    get<AnalyticsSummary['tableTurnover']>('/analytics/table-turnover', analyticsParams(params)),
   staffPerformance: (params?: AnalyticsQueryParams) =>
-    get<AnalyticsSummary['staffPerformance']>('/analytics/staff-performance', params as Record<string, string | number | boolean | undefined>),
+    get<AnalyticsSummary['staffPerformance']>('/analytics/staff-performance', analyticsParams(params)),
   transactions: (params?: AnalyticsQueryParams) =>
-    get<AnalyticsTransaction[]>('/analytics/transactions', params as Record<string, string | number | boolean | undefined>),
+    get<AnalyticsTransaction[]>('/analytics/transactions', analyticsParams(params)),
   getTransaction: async (paymentId: string) => {
     const raw = await get<Record<string, unknown>>(
       `/analytics/transactions/${encodeURIComponent(paymentId)}`,

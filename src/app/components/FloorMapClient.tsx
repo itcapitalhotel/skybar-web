@@ -20,12 +20,12 @@ import { getWsBaseUrl } from '@/lib/api/config';
 import type { TableData as ApiTableData, ZoneData, Booking } from '@/lib/api/types';
 import { applyBookingStatus, localDateString } from '@/lib/bookingTableStatus';
 import { getStaffIdForOrder } from '@/lib/staffDisplay';
-import type { ZoneMeta } from './floorData';
+import { findZone } from '@/lib/zoneResolve';
 import { LayoutGrid, Plus, PenLine, Map, Users, Layers, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 
-type ZoneFilter = 'all' | 'vip' | 'bar' | 'terrace' | 'cabana';
+type ZoneFilter = string; // 'all' | zone id from GET /zones
 
 const DEFAULT_ZONE_TABS: { id: ZoneFilter; label: string }[] = [
   { id: 'all', label: 'All Zones' },
@@ -38,19 +38,14 @@ const STATUS_LEGEND = [
   { color: 'bg-cyan-500', label: 'Bill Ready', glow: '' },
 ];
 
-/** Map API TableData zone string to local zone key */
-function normalizeZone(zone: string): TableData['zone'] {
-  const z = zone.toLowerCase();
-  if (z === 'vip' || z === 'bar' || z === 'terrace' || z === 'cabana') return z as TableData['zone'];
-  return 'bar';
-}
-
-/** Convert API table to local TableData shape */
-function apiTableToLocal(t: ApiTableData): TableData {
+/** Convert API table to local TableData — resolve zone to canonical GET /zones id when possible */
+function apiTableToLocal(t: ApiTableData, zones: ZoneData[] = []): TableData {
+  const rawZone = String(t.zone ?? '').trim();
+  const matched = findZone(zones, rawZone);
   return {
     id: t.id,
     label: t.label,
-    zone: normalizeZone(t.zone),
+    zone: matched?.id ?? rawZone,
     status: t.status as TableData['status'],
     guests: t.guestCount ?? t.guests ?? 0,
     capacity: t.capacity,
@@ -70,6 +65,7 @@ export default function FloorMapClient() {
   const [locked, setLocked] = useState(false);
   const [zoneFilter, setZoneFilter] = useState<ZoneFilter>('all');
   const [zoneTabs, setZoneTabs] = useState(DEFAULT_ZONE_TABS);
+  const [zoneCatalog, setZoneCatalog] = useState<ZoneData[]>([]);
   const [selectedTable, setSelectedTable] = useState<TableData | null>(null);
   const [tables, setTables] = useState<TableData[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -92,9 +88,13 @@ export default function FloorMapClient() {
   const [guestInfoTable, setGuestInfoTable] = useState<TableData | null>(null);
   const [pendingGuestCount, setPendingGuestCount] = useState<number>(0);
   const [tableNote, setTableNote] = useState<string>('');
+  const [tableOrderNotes, setTableOrderNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const wsRef = React.useRef<WebSocket | null>(null);
   const wsReconnectRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsAllowReconnectRef = React.useRef(true);
+  const zoneCatalogRef = React.useRef<ZoneData[]>(zoneCatalog);
+  zoneCatalogRef.current = zoneCatalog;
 
   const fetchBookings = useCallback(async () => {
     try {
@@ -111,33 +111,48 @@ export default function FloorMapClient() {
   );
 
   // ── Fetch tables from API ──────────────────────────────────────────────────
-  const fetchTables = useCallback(async () => {
-    setLoading(true);
+  /** `silent` skips the loading spinner (used by the 4s background poll). */
+  const fetchTables = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) setLoading(true);
     try {
       const apiTables = await tablesApi.list();
-      setTables(apiTables.map(apiTableToLocal));
+      setTables(apiTables.map((t) => apiTableToLocal(t, zoneCatalogRef.current)));
     } catch {
-      setTables([]);
+      if (!silent) setTables([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   const fetchZones = useCallback(async () => {
     try {
       const zones = await zonesApi.list();
+      setZoneCatalog(zones);
       const tabs = [
-        { id: 'all' as ZoneFilter, label: 'All Zones' },
-        ...zones.filter(z => z.isActive).map(z => ({
-          id: (['vip', 'bar', 'terrace', 'cabana'].includes(z.id.toLowerCase()) ? z.id.toLowerCase() : 'bar') as ZoneFilter,
+        { id: 'all', label: 'All Zones' },
+        ...zones.filter((z) => z.isActive).map((z) => ({
+          id: z.id,
           label: z.label,
         })),
       ];
       setZoneTabs(tabs);
     } catch {
+      setZoneCatalog([]);
       setZoneTabs(DEFAULT_ZONE_TABS);
     }
   }, []);
+
+  // Re-bind table.zone to canonical zone ids once the zone catalog is available
+  useEffect(() => {
+    if (zoneCatalog.length === 0) return;
+    setTables((prev) =>
+      prev.map((t) => {
+        const matched = findZone(zoneCatalog, t.zone);
+        return matched && matched.id !== t.zone ? { ...t, zone: matched.id } : t;
+      }),
+    );
+  }, [zoneCatalog]);
 
   const syncTableGuestCount = useCallback((tableId: string, guestCount: number) => {
     if (!Number.isFinite(guestCount) || guestCount < 1) return;
@@ -161,6 +176,7 @@ export default function FloorMapClient() {
       if (guestCount != null && guestCount > 0) {
         syncTableGuestCount(tableId, guestCount);
       }
+      setTableOrderNotes(prev => ({ ...prev, [tableId]: order.note?.trim() ?? '' }));
     } catch {
       setTableOrders(prev => ({ ...prev, [tableId]: [] }));
       setTableOrderTotals(prev => {
@@ -173,12 +189,21 @@ export default function FloorMapClient() {
         delete next[tableId];
         return next;
       });
+      setTableOrderNotes(prev => {
+        const next = { ...prev };
+        delete next[tableId];
+        return next;
+      });
     }
   }, [syncTableGuestCount]);
 
   // ── WebSocket: subscribe to /topic/tables/status ───────────────────────────
   const connectTableStatusWS = useCallback(() => {
     try {
+      if (wsRef.current) {
+        try { wsRef.current.close(); } catch { /* ignore */ }
+        wsRef.current = null;
+      }
       const wsBase = getWsBaseUrl();
       const ws = new WebSocket(`${wsBase}/ws/tables/status`);
       wsRef.current = ws;
@@ -234,6 +259,7 @@ export default function FloorMapClient() {
 
       ws.onclose = () => {
         wsRef.current = null;
+        if (!wsAllowReconnectRef.current) return;
         // Auto-reconnect after 5 s
         wsReconnectRef.current = setTimeout(() => {
           connectTableStatusWS();
@@ -245,17 +271,28 @@ export default function FloorMapClient() {
   }, []);
 
   useEffect(() => {
-    fetchTables();
-    fetchBookings();
-    fetchZones();
+    wsAllowReconnectRef.current = true;
+    void fetchTables();
+    void fetchBookings();
+    void fetchZones();
     connectTableStatusWS();
+
+    // Background refresh — once every 4 seconds (no loading flicker)
+    const pollId = setInterval(() => {
+      void fetchTables({ silent: true });
+      void fetchBookings();
+    }, 4000);
+
     return () => {
+      clearInterval(pollId);
+      wsAllowReconnectRef.current = false;
+      if (wsReconnectRef.current) {
+        clearTimeout(wsReconnectRef.current);
+        wsReconnectRef.current = null;
+      }
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
-      }
-      if (wsReconnectRef.current) {
-        clearTimeout(wsReconnectRef.current);
       }
     };
   }, [fetchTables, fetchBookings, fetchZones, connectTableStatusWS]);
@@ -325,6 +362,16 @@ export default function FloorMapClient() {
     await fetchOrderForTable(tableId);
   };
 
+  const handleUpdateItemNote = async (itemId: string, qty: number, notes: string) => {
+    if (!selectedTable) return;
+    const tableId = selectedTable.id;
+    if (!itemId || itemId.startsWith('item-')) {
+      throw new Error('This item is not saved on the order yet');
+    }
+    await ordersApi.updateItem(tableId, itemId, { qty, notes });
+    await fetchOrderForTable(tableId);
+  };
+
   const handleClearTable = async () => {
     if (!selectedTable) return;
     const tableId = selectedTable.id;
@@ -377,25 +424,30 @@ export default function FloorMapClient() {
     return Math.max(1, t?.guests ?? 1);
   };
 
-  const handleAddItemsToTable = async (tableId: string, newItems: OrderItem[]) => {
+  const handleAddItemsToTable = async (tableId: string, newItems: OrderItem[], orderNote?: string) => {
     const staffId = getStaffIdForOrder();
     if (!staffId) {
       throw new Error('Sign in again to send the order');
     }
     const guestCount = resolveGuestCountForTable(tableId);
+    const sharedNote = orderNote?.trim() ?? '';
     try {
       const result = await ordersApi.addItems(tableId, {
         staff: staffId,
         guestCount,
-        items: newItems.map(i => ({
-          menuItemId: i.menuItemId ?? i.id,
-          name: i.name,
-          qty: i.qty,
-          unitPrice: i.unitPrice,
-          categoryId: i.categoryId,
-          size: i.size,
-          notes: i.notes,
-        })),
+        ...(sharedNote ? { note: sharedNote } : {}),
+        items: newItems.map(i => {
+          const lineNote = i.notes?.trim() ?? '';
+          return {
+            menuItemId: i.menuItemId ?? i.id,
+            name: i.name,
+            qty: i.qty,
+            unitPrice: i.unitPrice,
+            categoryId: i.categoryId,
+            size: i.size,
+            ...(lineNote ? { note: lineNote } : {}),
+          };
+        }),
       });
       if (result.orderId) {
         setTableOrderIds(prev => ({ ...prev, [tableId]: String(result.orderId) }));
@@ -577,7 +629,7 @@ export default function FloorMapClient() {
     const sourceId = selectedTable?.id;
     try {
       const apiTables = await tablesApi.list();
-      const local = apiTables.map(apiTableToLocal);
+      const local = apiTables.map((t) => apiTableToLocal(t, zoneCatalog));
       setTables(local);
       const target = local.find(t => t.id === targetTableId);
       if (target) setSelectedTable(target);
@@ -782,9 +834,9 @@ export default function FloorMapClient() {
             />
           </div>
 
-          {/* Order Panel — full width on tablet, fixed sidebar on lg+ */}
-          <div className="w-full lg:w-72 xl:w-80 flex-shrink-0 glass-card rounded-2xl border border-border overflow-hidden flex flex-col" style={{ minHeight: '320px', maxHeight: '600px' }}>
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+          {/* Order Panel — capped on tablet so Pay Now stays visible; stretches beside map on lg+ */}
+          <div className="w-full lg:w-72 xl:w-80 flex-shrink-0 glass-card rounded-2xl border border-border overflow-hidden flex flex-col min-h-0 h-[min(560px,58dvh)] max-h-[min(560px,58dvh)] lg:h-auto lg:max-h-none lg:self-stretch">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between flex-shrink-0">
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 {editMode ? 'Edit Table' : 'Order Panel'}
               </span>
@@ -806,11 +858,12 @@ export default function FloorMapClient() {
                 </div>
               )}
             </div>
-            <div className="flex-1 overflow-hidden flex flex-col">
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
               {editMode ? (
                 <EditTablePanel
                   table={selectedTable}
                   saving={editTableSaving}
+                  zoneLabel={selectedTable ? (findZone(zoneCatalog, selectedTable.zone)?.label || selectedTable.zone) : undefined}
                   onRename={handleRenameTable}
                   onDelete={handleDeleteTable}
                   onChangeShape={handleChangeShape}
@@ -822,6 +875,7 @@ export default function FloorMapClient() {
                   role={role}
                   onVoidItem={handleVoidItem}
                   onUpdateQty={handleUpdateItemQty}
+                  onUpdateNote={handleUpdateItemNote}
                   onOpenSplit={() => setSplitOpen(true)}
                   onOpenTransfer={() => setTransferOpen(true)}
                   onOpenPayment={() => setPaymentOpen(true)}
@@ -841,7 +895,7 @@ export default function FloorMapClient() {
           onClose={() => { setMenuTable(null); setMenuShowAll(false); setTableNote(''); }}
           onAddItems={handleAddItemsToTable}
           showAll={menuShowAll}
-          tableNote={tableNote}
+          tableNote={tableOrderNotes[menuTable.id] || tableNote}
         />
       )}
 
@@ -849,6 +903,7 @@ export default function FloorMapClient() {
       {guestInfoTable && (
         <GuestInfoModal
           table={guestInfoTable}
+          zones={zoneCatalog}
           onClose={() => setGuestInfoTable(null)}
           onConfirm={handleGuestInfoConfirm}
         />
@@ -895,7 +950,13 @@ export default function FloorMapClient() {
             isOpen={splitOpen}
             onClose={() => setSplitOpen(false)}
             items={currentItems.filter(i => i.status !== 'Voided').map(i => ({
-              id: i.id, name: i.name, qty: i.qty, price: i.unitPrice
+              id: i.id,
+              name: i.name,
+              qty: i.qty,
+              price: i.unitPrice,
+              menuItemId: i.menuItemId,
+              size: i.size,
+              notes: i.notes,
             }))}
             total={currentTotal}
             tableId={selectedTable.id}
@@ -908,6 +969,7 @@ export default function FloorMapClient() {
             onClose={() => setTransferOpen(false)}
             sourceTable={selectedTable}
             tables={tables}
+            zones={zoneCatalog}
             onTransferred={targetId => void handleTableTransferred(targetId)}
           />
         </>

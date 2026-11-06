@@ -4,6 +4,43 @@ export interface SplitLineItem {
   id: string;
   qty: number;
   price: number;
+  name?: string;
+  menuItemId?: string;
+  size?: string;
+  notes?: string;
+}
+
+/** One assignable unit after exploding qty>1 lines (By item split). */
+export interface ExplodedSplitUnit {
+  key: string;
+  sourceId: string;
+  unitIndex: number;
+  name: string;
+  price: number;
+  menuItemId?: string;
+  size?: string;
+  notes?: string;
+}
+
+/** Break each line into qty× unit-1 rows so guests can take one each. */
+export function explodeItemsToUnits(items: SplitLineItem[]): ExplodedSplitUnit[] {
+  const units: ExplodedSplitUnit[] = [];
+  for (const item of items) {
+    const qty = Math.max(1, Math.floor(Number(item.qty)) || 1);
+    for (let i = 0; i < qty; i += 1) {
+      units.push({
+        key: `${item.id}::${i}`,
+        sourceId: item.id,
+        unitIndex: i,
+        name: item.name || item.id,
+        price: item.price,
+        menuItemId: item.menuItemId,
+        size: item.size,
+        notes: item.notes,
+      });
+    }
+  }
+  return units;
 }
 
 export function lineSubtotal(item: SplitLineItem): number {

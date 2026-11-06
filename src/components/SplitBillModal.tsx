@@ -3,14 +3,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X, Users, SplitSquareHorizontal, Check, Minus, Plus } from 'lucide-react';
 import { toast } from 'sonner';
-import { paymentsApi } from '@/lib/api/client';
+import { ordersApi, paymentsApi } from '@/lib/api/client';
 import { getAuthUser } from '@/lib/api/config';
 import type { PaymentMethod, SplitPaymentLine } from '@/lib/api/types';
 import {
+  explodeItemsToUnits,
   isValidItemPartition,
   partitionItemsByAmounts,
   partitionItemsEvenly,
-  subtotalForItemIds,
+  type ExplodedSplitUnit,
 } from '@/lib/splitBillHelpers';
 
 interface OrderItem {
@@ -18,6 +19,9 @@ interface OrderItem {
   name: string;
   qty: number;
   price: number;
+  menuItemId?: string;
+  size?: string;
+  notes?: string;
 }
 
 interface SplitBillModalProps {
@@ -182,6 +186,19 @@ export default function SplitBillModal({
   const displayTable = tableLabel ?? tableId;
   const perPerson = total / splitCount;
 
+  const splitUnits = useMemo(
+    () => explodeItemsToUnits(items.map((it) => ({
+      id: it.id,
+      qty: it.qty,
+      price: it.price,
+      name: it.name,
+      menuItemId: it.menuItemId,
+      size: it.size,
+      notes: it.notes,
+    }))),
+    [items],
+  );
+
   useEffect(() => {
     if (!isOpen) return;
     setMode('equal');
@@ -192,6 +209,16 @@ export default function SplitBillModal({
     setGuestCardNames(['Visa', 'Visa']);
     setGuestCardNumbers(['', '']);
   }, [isOpen, total]);
+
+  const unitsSignature = useMemo(
+    () => splitUnits.map((u) => u.key).join('|'),
+    [splitUnits],
+  );
+
+  // Clear unit assignments only when the exploded unit set actually changes
+  useEffect(() => {
+    setAssignments({});
+  }, [unitsSignature]);
 
   useEffect(() => {
     setGuestAmounts(prev => {
@@ -219,12 +246,96 @@ export default function SplitBillModal({
   );
   const amountDelta = Math.round((total - amountSum) * 100) / 100;
 
-  const assignItem = (itemId: string, person: number) => {
-    setAssignments(prev => ({ ...prev, [itemId]: person }));
+  const assignUnit = (unitKey: string, person: number) => {
+    setAssignments((prev) => ({ ...prev, [unitKey]: person }));
   };
 
-  const personTotal = (person: number) =>
-    items.reduce((acc, item) => (assignments[item.id] === person ? acc + item.price * item.qty : acc), 0);
+  /**
+   * When units of the same order line go to different guests, break that line
+   * into separate qty lines on the order so each guest gets real itemIds.
+   */
+  const materializeByItemAssignments = async (
+    units: ExplodedSplitUnit[],
+    staffId: string,
+  ): Promise<Map<number, string[]>> => {
+    const bySource = new Map<string, ExplodedSplitUnit[]>();
+    for (const unit of units) {
+      const list = bySource.get(unit.sourceId) ?? [];
+      list.push(unit);
+      bySource.set(unit.sourceId, list);
+    }
+
+    const guestItemIds = new Map<number, string[]>();
+    const pushId = (guest: number, id: string) => {
+      const list = guestItemIds.get(guest) ?? [];
+      list.push(id);
+      guestItemIds.set(guest, list);
+    };
+
+    for (const [sourceId, sourceUnits] of bySource) {
+      const item = items.find((it) => it.id === sourceId);
+      if (!item) continue;
+
+      const byGuest = new Map<number, ExplodedSplitUnit[]>();
+      for (const unit of sourceUnits) {
+        const guest = assignments[unit.key];
+        if (!guest) continue;
+        const list = byGuest.get(guest) ?? [];
+        list.push(unit);
+        byGuest.set(guest, list);
+      }
+
+      const guestEntries = [...byGuest.entries()].sort(
+        (a, b) =>
+          Math.min(...a[1].map((u) => u.unitIndex)) -
+          Math.min(...b[1].map((u) => u.unitIndex)),
+      );
+      if (guestEntries.length === 0) continue;
+
+      // Entire line stays with one guest — keep original order line id
+      if (guestEntries.length === 1) {
+        pushId(guestEntries[0][0], sourceId);
+        continue;
+      }
+
+      if (!item.menuItemId) {
+        throw new Error(
+          `Cannot split "${item.name}" into single units — missing menu item id. Re-add the item and try again.`,
+        );
+      }
+
+      const [firstGuest, firstUnits] = guestEntries[0];
+      await ordersApi.updateItem(tableId, sourceId, {
+        qty: firstUnits.length,
+        notes: item.notes,
+      });
+      pushId(firstGuest, sourceId);
+
+      for (let i = 1; i < guestEntries.length; i += 1) {
+        const [guest, guestUnits] = guestEntries[i];
+        const added = await ordersApi.addItems(tableId, {
+          staff: staffId,
+          items: [
+            {
+              menuItemId: item.menuItemId,
+              name: item.name,
+              qty: guestUnits.length,
+              unitPrice: item.price,
+              size: item.size,
+              notes: item.notes,
+            },
+          ],
+        });
+        const newIds = (added.addedItems ?? []).map((row) => row.id).filter(Boolean);
+        if (newIds.length === 0) {
+          throw new Error(`Failed to create split line for ${item.name}`);
+        }
+        for (const id of newIds) pushId(guest, id);
+      }
+    }
+
+    return guestItemIds;
+  };
 
   const setGuestAmount = (index: number, raw: string) => {
     const n = parseFloat(raw);
@@ -278,9 +389,9 @@ export default function SplitBillModal({
     }
 
     if (mode === 'byitem') {
-      const unassigned = items.filter(it => !assignments[it.id]);
+      const unassigned = splitUnits.filter((unit) => !assignments[unit.key]);
       if (unassigned.length > 0) {
-        toast.error('Assign every line item to a guest');
+        toast.error('Assign every item unit to a guest');
         return;
       }
     }
@@ -320,16 +431,25 @@ export default function SplitBillModal({
           amount: row.amount,
         }, row.guestIndex));
       } else {
+        const staffId = getAuthUser()?.id;
+        if (!staffId) {
+          toast.error('Sign in again to process split payments');
+          return;
+        }
+
+        // Break multi-qty lines into real order lines when units go to different guests
+        const guestItemIds = await materializeByItemAssignments(splitUnits, staffId);
         const guests = Array.from({ length: splitCount }).map((_, i) => {
           const guestNum = i + 1;
-          const guestItems = items.filter(it => assignments[it.id] === guestNum);
-          const ids = guestItems.map(it => it.id);
-          const sub = subtotalForItemIds(lineItems, ids);
+          const ids = [...new Set(guestItemIds.get(guestNum) ?? [])];
+          const sub = splitUnits
+            .filter((unit) => assignments[unit.key] === guestNum)
+            .reduce((a, unit) => a + unit.price, 0);
           return { guestNum, ids, sub };
-        }).filter(g => g.ids.length > 0);
+        }).filter((g) => g.ids.length > 0);
 
-        const orderSub = lineItems.reduce((a, it) => a + it.price * it.qty, 0);
-        const shareAmounts = guests.map(g =>
+        const orderSub = splitUnits.reduce((a, unit) => a + unit.price, 0);
+        const shareAmounts = guests.map((g) =>
           orderSub > 0 ? Math.round((g.sub / orderSub) * total * 100) / 100 : 0,
         );
         const shareSum = shareAmounts.reduce((a, v) => a + v, 0);
@@ -341,7 +461,38 @@ export default function SplitBillModal({
           itemIds: g.ids,
           method: guestMethods[g.guestNum - 1] ?? 'card',
           amount: shareAmounts[idx] ?? 0,
-        }, g.guestNum - 1)).filter(s => s.itemIds.length > 0 && s.amount > 0);
+        }, g.guestNum - 1)).filter((s) => s.itemIds.length > 0 && s.amount > 0);
+
+        splits = splits.filter((s) => s.itemIds.length > 0 && s.amount > 0);
+
+        if (splits.length === 0) {
+          toast.error('No split payments to process');
+          return;
+        }
+
+        const missingTxn = splits.find((s) => s.method === 'card' && !s.cardNumber?.trim());
+        if (missingTxn) {
+          toast.error(`Enter transaction number for ${missingTxn.guestLabel}`);
+          return;
+        }
+
+        const materializedIds = splits.flatMap((s) => s.itemIds);
+        if (!isValidItemPartition(materializedIds, splits.map((s) => s.itemIds))) {
+          toast.error('Each guest needs at least one item, and every item must be assigned once');
+          return;
+        }
+
+        await paymentsApi.split({
+          tableId,
+          guestCount: Math.max(1, guestCount),
+          splits,
+          staffId,
+          cashierId: staffId,
+        });
+        toast.success(`Bill split into ${splits.length} — receipts ready for printing`);
+        onSplitComplete?.();
+        onClose();
+        return;
       }
 
       splits = splits.filter(s => s.itemIds.length > 0 && s.amount > 0);
@@ -503,20 +654,26 @@ export default function SplitBillModal({
 
           {mode === 'byitem' && (
             <div className="space-y-2 fade-in">
-              {items.map(item => (
-                <div key={`assign-${item.id}`} className="flex items-center justify-between p-3 rounded-xl bg-muted/20 border border-border">
+              <p className="text-[10px] text-muted-foreground">
+                Multi-qty lines are broken into 1× units so you can assign each one to a different guest.
+              </p>
+              {splitUnits.map((unit) => (
+                <div key={`assign-${unit.key}`} className="flex items-center justify-between p-3 rounded-xl bg-muted/20 border border-border">
                   <div className="min-w-0 flex-1 mr-3">
-                    <p className="text-sm text-foreground font-medium truncate">{item.qty}x {item.name}</p>
-                    <p className="text-xs text-muted-foreground text-tabular">${(item.price * item.qty).toFixed(2)}</p>
+                    <p className="text-sm text-foreground font-medium truncate">
+                      1× {unit.name}
+                      {unit.size ? ` · ${unit.size}` : ''}
+                    </p>
+                    <p className="text-xs text-muted-foreground text-tabular">${unit.price.toFixed(2)}</p>
                   </div>
                   <div className="flex gap-1.5 flex-wrap justify-end max-w-[50%]">
                     {Array.from({ length: splitCount }).map((_, gi) => (
                       <button
-                        key={`assign-${item.id}-g${gi}`}
+                        key={`assign-${unit.key}-g${gi}`}
                         type="button"
-                        onClick={() => assignItem(item.id, gi + 1)}
+                        onClick={() => assignUnit(unit.key, gi + 1)}
                         className={`min-w-8 h-8 px-1 rounded-lg border text-xs font-semibold transition-all duration-100 ${
-                          assignments[item.id] === gi + 1
+                          assignments[unit.key] === gi + 1
                             ? 'bg-primary/20 border-primary/50 text-primary'
                             : 'border-border text-muted-foreground hover:bg-muted/40'
                         }`}

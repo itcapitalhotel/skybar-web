@@ -288,6 +288,7 @@ export interface ReportGridRow {
   key: string;
   orderLabel: string;
   tableLabel: string;
+  zoneLabel: string;
   guests: number;
   itemName: string;
   qty: number;
@@ -306,6 +307,8 @@ export interface ReportGridRow {
   openedAt: string;
   closedAt: string;
   paymentId: string;
+  /** Sequential order id used by reopen and payment correction. */
+  orderId: string;
   isOrderSummaryOnly?: boolean;
 }
 
@@ -367,9 +370,14 @@ export function buildReportGridRows(details: AnalyticsTransactionDetail[]): Repo
     const vat = Number(d.vat ?? 0);
     const orderTotal = Number(d.total ?? d.amount ?? 0);
     const guests = Number(d.guestCount ?? d.covers ?? 1) || 1;
+    const raw = d as unknown as Record<string, unknown>;
+    const zoneLabel = String(
+      d.zoneLabel ?? raw.zone_label ?? raw.zone ?? '',
+    ).trim() || '—';
     const base = {
       orderLabel: shortOrderLabel(d),
       tableLabel: d.tableLabel || 'N/A',
+      zoneLabel,
       guests,
       subtotal: subtotal || orderTotal,
       serviceCharge,
@@ -384,6 +392,7 @@ export function buildReportGridRows(details: AnalyticsTransactionDetail[]): Repo
       openedAt: fmtReportDateTime(d.openedAt),
       closedAt: fmtReportDateTime(d.closedAt ?? d.time),
       paymentId: d.paymentId,
+      orderId: d.orderId ?? '',
     };
 
     if (items.length === 0) {
@@ -496,7 +505,7 @@ export function buildShopReportCsv(
     year: 'numeric',
   });
 
-  lines.push(csvRow(['SkyBar Report']));
+  lines.push(csvRow(['NAKNAK POS Report']));
   lines.push(csvRow([`Date Range: ${dateFrom} to ${dateTo}`]));
   lines.push(csvRow([`Generated on: ${generatedLabel}`]));
   lines.push('');
@@ -537,6 +546,7 @@ export function buildShopReportCsv(
     csvRow([
       'Order ID',
       'Table',
+      'Zone',
       'Guests',
       'Items',
       'Qty',
@@ -565,6 +575,7 @@ export function buildShopReportCsv(
       csvRow([
         row.orderLabel,
         row.tableLabel,
+        row.zoneLabel,
         row.guests,
         row.itemName,
         row.qty || '',

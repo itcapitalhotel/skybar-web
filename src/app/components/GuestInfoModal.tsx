@@ -1,18 +1,40 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Users, Minus, Plus, FileText, ArrowRight } from 'lucide-react';
 import { TableData } from './floorData';
+import { zonesApi } from '@/lib/api/client';
+import type { ZoneData } from '@/lib/api/types';
+import { findZone } from '@/lib/zoneResolve';
 
 interface GuestInfoModalProps {
   table: TableData;
   onClose: () => void;
   onConfirm: (guestCount: number, tableNote: string) => void;
+  /** Optional preloaded zones from the floor map (avoids an extra fetch). */
+  zones?: ZoneData[];
 }
 
-export default function GuestInfoModal({ table, onClose, onConfirm }: GuestInfoModalProps) {
+export default function GuestInfoModal({ table, onClose, onConfirm, zones: zonesProp }: GuestInfoModalProps) {
   const [guestCount, setGuestCount] = useState<number>(2);
   const [tableNote, setTableNote] = useState<string>('');
+  const [zones, setZones] = useState<ZoneData[]>(zonesProp ?? []);
+
+  useEffect(() => {
+    if (zonesProp && zonesProp.length > 0) {
+      setZones(zonesProp);
+      return;
+    }
+    let cancelled = false;
+    zonesApi.list()
+      .then((list) => {
+        if (!cancelled) setZones(list);
+      })
+      .catch(() => {
+        if (!cancelled) setZones([]);
+      });
+    return () => { cancelled = true; };
+  }, [zonesProp, table.id]);
 
   const decrement = () => setGuestCount(prev => Math.max(1, prev - 1));
   const increment = () => setGuestCount(prev => prev + 1);
@@ -21,11 +43,8 @@ export default function GuestInfoModal({ table, onClose, onConfirm }: GuestInfoM
     onConfirm(guestCount, tableNote.trim());
   };
 
-  const zoneLabel =
-    table.zone === 'vip' ? 'VIP Edge Skyline'
-    : table.zone === 'bar' ? 'Main Bar'
-    : table.zone === 'terrace' ? 'Outdoor Terrace'
-    : 'Cabana Deck';
+  const matched = findZone(zones, table.zone);
+  const zoneLabel = matched?.label || table.zone || 'Zone';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -35,7 +54,10 @@ export default function GuestInfoModal({ table, onClose, onConfirm }: GuestInfoM
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
             <h2 className="text-base font-bold text-foreground">Table {table.label}</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">{zoneLabel}{table.minSpend ? ` · $${table.minSpend} min spend` : ''}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {zoneLabel}
+              {table.minSpend ? ` · $${table.minSpend} min spend` : ''}
+            </p>
           </div>
           <button
             onClick={onClose}
@@ -49,80 +71,56 @@ export default function GuestInfoModal({ table, onClose, onConfirm }: GuestInfoM
         <div className="px-5 py-5 space-y-5">
           {/* Guest Count */}
           <div>
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-7 h-7 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center">
-                <Users size={14} className="text-primary" />
-              </div>
-              <span className="text-sm font-semibold text-foreground">Number of Guests</span>
-            </div>
-            <div className="flex items-center justify-center gap-4">
+            <label className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+              <Users size={12} />
+              Number of Guests
+            </label>
+            <div className="flex items-center gap-3 mt-2">
               <button
+                type="button"
                 onClick={decrement}
-                disabled={guestCount <= 1}
-                className="w-10 h-10 rounded-xl bg-muted/50 border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-primary/40 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                className="w-11 h-11 rounded-xl border border-border bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-muted/50 flex items-center justify-center transition-all"
               >
                 <Minus size={16} />
               </button>
-              <div className="w-20 h-14 rounded-xl bg-primary/10 border border-primary/30 flex items-center justify-center">
-                <span className="text-3xl font-bold text-primary text-tabular">{guestCount}</span>
+              <div className="flex-1 h-11 rounded-xl border border-border bg-muted/20 flex items-center justify-center">
+                <span className="text-xl font-bold text-foreground tabular-nums">{guestCount}</span>
               </div>
               <button
+                type="button"
                 onClick={increment}
-                className="w-10 h-10 rounded-xl bg-muted/50 border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:border-primary/40 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                className="w-11 h-11 rounded-xl border border-border bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-muted/50 flex items-center justify-center transition-all"
               >
                 <Plus size={16} />
               </button>
-            </div>
-            {/* Quick select buttons */}
-            <div className="flex items-center gap-2 mt-3 justify-center flex-wrap">
-              {[1, 2, 3, 4, 5, 6].map(n => (
-                <button
-                  key={n}
-                  onClick={() => setGuestCount(n)}
-                  className={`w-8 h-8 rounded-lg text-xs font-semibold transition-all border ${
-                    guestCount === n
-                      ? 'bg-primary/20 border-primary/50 text-primary' :'bg-muted/30 border-border text-muted-foreground hover:text-foreground hover:border-border'
-                  }`}
-                >
-                  {n}
-                </button>
-              ))}
             </div>
           </div>
 
           {/* Table Note */}
           <div>
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
-                <FileText size={14} className="text-amber-400" />
-              </div>
-              <span className="text-sm font-semibold text-foreground">Table Note</span>
-              <span className="text-xs text-muted-foreground ml-auto">Optional</span>
-            </div>
+            <label className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+              <FileText size={12} />
+              Table Note <span className="text-muted-foreground/60">(optional)</span>
+            </label>
             <textarea
               value={tableNote}
-              onChange={e => setTableNote(e.target.value)}
-              placeholder="e.g. Birthday celebration, allergy: nuts, VIP guest..."
+              onChange={(e) => setTableNote(e.target.value)}
+              placeholder="Allergy, celebration, seating preference…"
               rows={3}
-              className="w-full bg-input border border-border rounded-xl px-3 py-2.5 text-foreground text-xs focus:outline-none focus:border-primary transition-colors resize-none placeholder:text-muted-foreground/60"
+              className="mt-2 w-full rounded-xl border border-border bg-muted/20 px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/40 resize-none"
             />
           </div>
         </div>
 
         {/* Footer */}
-        <div className="px-5 pb-5 flex gap-3">
+        <div className="px-5 pb-5">
           <button
-            onClick={onClose}
-            className="flex-1 btn-ghost rounded-xl py-2.5 text-sm font-medium"
-          >
-            Cancel
-          </button>
-          <button
+            type="button"
             onClick={handleConfirm}
-            className="flex-1 btn-primary rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-2"
+            className="w-full btn-primary rounded-xl py-3 font-semibold text-sm flex items-center justify-center gap-2"
           >
-            Open Menu
-            <ArrowRight size={15} />
+            Continue to Menu
+            <ArrowRight size={16} />
           </button>
         </div>
       </div>

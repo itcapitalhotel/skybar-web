@@ -5,7 +5,8 @@ export type OrderItemStatus = 'Queued' | 'In Prep' | 'Ready' | 'Served' | 'Voide
 export interface TableData {
   id: string;
   label: string;
-  zone: 'vip' | 'bar' | 'terrace' | 'cabana';
+  /** Zone id from GET /zones (and table.zone) — not a display label */
+  zone: string;
   status: TableStatus;
   guests: number;
   capacity: number;
@@ -19,7 +20,7 @@ export interface TableData {
 }
 
 export interface ZoneMeta {
-  id: 'vip' | 'bar' | 'terrace' | 'cabana';
+  id: string;
   label: string;
   color: string;
   accentColor: string;

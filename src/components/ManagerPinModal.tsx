@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
-import { ShieldCheck, Delete, X } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ShieldCheck, X } from 'lucide-react';
+import PinPad from '@/components/PinPad';
 import { authApi } from '@/lib/api/client';
 
 interface ManagerPinModalProps {
@@ -23,53 +24,58 @@ export default function ManagerPinModal({
   const [error, setError] = useState('');
   const [shake, setShake] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const submittingRef = useRef(false);
 
-  React.useEffect(() => {
-    if (!isOpen) { setPin(''); setError(''); }
+  useEffect(() => {
+    if (!isOpen) {
+      setPin('');
+      setError('');
+      submittingRef.current = false;
+    }
   }, [isOpen]);
 
-  const handleKey = (key: string) => {
-    if (pin.length < 4) {
-      const newPin = pin + key;
-      setPin(newPin);
-      setError('');
-      if (newPin.length === 4) {
-        setTimeout(async () => {
-          setVerifying(true);
-          try {
-            const result = await authApi.verifyManagerPin({ pin: newPin, action });
-            if (result.approved) {
-              onApprove();
-              setPin('');
-            } else {
-              setError('Incorrect manager PIN.');
-              setShake(true);
-              setTimeout(() => { setShake(false); setPin(''); }, 600);
-            }
-          } catch {
-            setError('Incorrect manager PIN.');
-            setShake(true);
-            setTimeout(() => { setShake(false); setPin(''); }, 600);
-          } finally {
-            setVerifying(false);
-          }
-        }, 100);
+  useEffect(() => {
+    if (!isOpen || pin.length !== 4 || verifying) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+
+    const t = window.setTimeout(async () => {
+      setVerifying(true);
+      try {
+        const result = await authApi.verifyManagerPin({ pin, action });
+        if (result.approved) {
+          onApprove();
+          setPin('');
+        } else {
+          setError('Incorrect manager PIN.');
+          setShake(true);
+          setTimeout(() => { setShake(false); setPin(''); }, 600);
+        }
+      } catch {
+        setError('Incorrect manager PIN.');
+        setShake(true);
+        setTimeout(() => { setShake(false); setPin(''); }, 600);
+      } finally {
+        setVerifying(false);
+        submittingRef.current = false;
       }
-    }
-  };
+    }, 100);
+
+    return () => window.clearTimeout(t);
+  }, [pin, isOpen, verifying, action, onApprove]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4">
-      <div className="glass-card-elevated rounded-2xl border border-border w-full max-w-sm slide-up">
+    <div className="fixed inset-0 z-50 modal-overlay flex items-center justify-center p-4 overflow-y-auto">
+      <div className="glass-card-elevated rounded-2xl border border-border w-full max-w-sm slide-up my-auto">
         <div className="p-6">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <ShieldCheck size={16} className="text-amber-400" />
               <h3 className="text-sm font-semibold text-foreground">Manager Approval</h3>
             </div>
-            <button onClick={onClose} className="p-1 rounded-lg text-muted-foreground hover:text-foreground">
+            <button type="button" onClick={onClose} className="p-1 rounded-lg text-muted-foreground hover:text-foreground touch-manipulation">
               <X size={16} />
             </button>
           </div>
@@ -89,23 +95,15 @@ export default function ManagerPinModal({
           {error && <p className="text-center text-xs text-rose-400 mb-3">{error}</p>}
           {verifying && <p className="text-center text-xs text-muted-foreground mb-3">Verifying...</p>}
 
-          <div className="grid grid-cols-3 gap-2">
-            {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(k => (
-              <button
-                key={`mgr-key-${k}`}
-                onClick={() => handleKey(k)}
-                disabled={verifying}
-                className="pin-key rounded-xl h-11 text-base font-semibold text-foreground disabled:opacity-40"
-              >
-                {k}
-              </button>
-            ))}
-            <button onClick={() => { setPin(''); setError(''); }} className="pin-key rounded-xl h-11 text-xs text-muted-foreground">CLR</button>
-            <button onClick={() => handleKey('0')} disabled={verifying} className="pin-key rounded-xl h-11 text-base font-semibold">0</button>
-            <button onClick={() => setPin(p => p.slice(0, -1))} className="pin-key rounded-xl h-11 flex items-center justify-center">
-              <Delete size={14} />
-            </button>
-          </div>
+          <PinPad
+            value={pin}
+            disabled={verifying}
+            keyClassName="h-11 text-base"
+            onChange={(next) => {
+              setPin(next);
+              setError('');
+            }}
+          />
         </div>
       </div>
     </div>

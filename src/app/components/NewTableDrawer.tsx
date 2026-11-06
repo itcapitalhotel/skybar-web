@@ -34,18 +34,13 @@ export default function NewTableDrawer({ isOpen, onClose, onTableAdded }: NewTab
   React.useEffect(() => {
     if (!isOpen) return;
     zonesApi.list()
-      .then((list) =>
-        setZones(list.filter((z) => z.isActive).map((z) => ({ id: z.id.toLowerCase(), label: z.label }))),
-      )
-      .catch(() =>
-        setZones([
-          { id: 'vip', label: 'VIP Edge Skyline' },
-          { id: 'bar', label: 'Main Bar' },
-          { id: 'terrace', label: 'Outdoor Terrace' },
-          { id: 'cabana', label: 'Cabana Deck' },
-        ]),
-      );
-  }, [isOpen]);
+      .then((list) => {
+        const active = list.filter((z) => z.isActive).map((z) => ({ id: z.id, label: z.label }));
+        setZones(active);
+        if (active[0]) setValue('zone', active[0].id);
+      })
+      .catch(() => setZones([]));
+  }, [isOpen, setValue]);
 
   const onSubmit = async (data: TableFormData) => {
     setLoading(true);
@@ -59,7 +54,8 @@ export default function NewTableDrawer({ isOpen, onClose, onTableAdded }: NewTab
         y: 80,
         minSpend: data.minSpend ? Number(data.minSpend) : undefined,
       });
-      toast.success(`Table ${data.tableNumber} added to ${data.zone}`);
+      const zoneName = zones.find((z) => z.id === data.zone)?.label || data.zone;
+      toast.success(`Table ${data.tableNumber} added to ${zoneName}`);
       reset();
       onClose();
       onTableAdded?.();
@@ -114,7 +110,7 @@ export default function NewTableDrawer({ isOpen, onClose, onTableAdded }: NewTab
                 {...register('zone', { required: true })}
                 className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-foreground text-sm focus:outline-none focus:border-primary transition-colors"
               >
-                {(zones.length ? zones : [{ id: 'bar', label: 'Main Bar' }]).map((z) => (
+                {zones.map((z) => (
                   <option key={z.id} value={z.id}>
                     {z.label}
                   </option>

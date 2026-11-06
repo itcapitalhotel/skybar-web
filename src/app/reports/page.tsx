@@ -8,11 +8,12 @@ import {
   BarChart3, ArrowUpDown, RefreshCw, AlertCircle,
 } from 'lucide-react';
 import OrderDetailModal from '@/app/reports/OrderDetailModal';
+import ReopenOrderDialog from '@/app/reports/ReopenOrderDialog';
 import SkyBarShopReport from '@/app/reports/SkyBarShopReport';
 import { buildMenuCategoryLookup, buildShopReportCsv } from '@/app/reports/reportDocumentHelpers';
 import DateRangePicker, { todayRange } from '@/components/DateRangePicker';
-import { analyticsApi, menuApi, menuCategoryApi } from '@/lib/api/client';
-import type { MenuCategoryLookup } from '@/app/reports/reportDocumentHelpers';
+import { analyticsApi, menuApi, menuCategoryApi, tablesApi, zonesApi } from '@/lib/api/client';
+import type { MenuCategoryLookup, ReportGridRow } from '@/app/reports/reportDocumentHelpers';
 import {
   ensureStaffNameCache,
   finalizeStaffDisplay,
@@ -21,7 +22,14 @@ import {
   registerStaffNames,
   resolveStaffDisplay,
 } from '@/lib/staffDisplay';
-import type { AnalyticsStaffPerformance, AnalyticsTransaction, AnalyticsTransactionDetail } from '@/lib/api/types';
+import type {
+  AnalyticsStaffPerformance,
+  AnalyticsTransaction,
+  AnalyticsTransactionDetail,
+  TableData,
+  ZoneData,
+} from '@/lib/api/types';
+import { buildTableZoneLookup, resolveZoneFromFields } from '@/lib/zoneResolve';
 
 interface StaffReportRow {
   name: string;
@@ -139,6 +147,7 @@ export default function ReportsPage() {
   const [reportGeneratedAt, setReportGeneratedAt] = useState(() => new Date());
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [detailRow, setDetailRow] = useState<OrderReportRow | null>(null);
+  const [updateRow, setUpdateRow] = useState<ReportGridRow | null>(null);
 
   const loadReport = useCallback(async () => {
     setLoading(true);
@@ -190,16 +199,47 @@ export default function ReportsPage() {
       }
 
       setLoadingDetails(true);
+      const [tables, zones] = await Promise.all([
+        tablesApi.list().catch(() => [] as TableData[]),
+        zonesApi.list().catch(() => [] as ZoneData[]),
+      ]);
+      const zoneLookup = buildTableZoneLookup(tables, zones);
+
       const details = await Promise.all(
         orders.map(async (o) => {
           try {
-            return await analyticsApi.getTransaction(o.paymentId);
+            const detail = await analyticsApi.getTransaction(o.paymentId);
+            const raw = detail as unknown as Record<string, unknown>;
+            const zoneLabel = resolveZoneFromFields(
+              {
+                zoneId: detail.zoneId ?? (raw.zone_id as string | undefined),
+                zoneLabel: detail.zoneLabel ?? (raw.zone_label as string | undefined),
+                zone: raw.zone as string | undefined,
+                tableId: detail.tableId,
+                tableLabel: detail.tableLabel || o.tableLabel,
+              },
+              zoneLookup,
+              zones,
+            ).zone;
+            return {
+              ...detail,
+              orderId: detail.orderId || o.orderId,
+              zoneLabel: zoneLabel !== 'Other' ? zoneLabel : detail.zoneLabel || zoneLabel,
+            };
           } catch {
+            const zoneLabel = resolveZoneFromFields(
+              {
+                tableLabel: o.tableLabel,
+              },
+              zoneLookup,
+              zones,
+            ).zone;
             return {
               paymentId: o.paymentId,
               orderId: o.orderId,
               tableId: '',
               tableLabel: o.tableLabel,
+              zoneLabel: zoneLabel !== 'Other' ? zoneLabel : undefined,
               method: o.method,
               amount: o.amount,
               total: o.amount,
@@ -298,7 +338,7 @@ export default function ReportsPage() {
           <div>
             <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
               <BarChart3 size={22} className="text-primary" />
-              SkyBar Shop Report
+              NAKNAK POS Shop Report
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
               Summary, payment breakdown, and line-item detail — print or export for accounting.
@@ -367,6 +407,7 @@ export default function ReportsPage() {
             const row = orderRows.find((o) => o.paymentId === paymentId);
             if (row) setDetailRow(row);
           }}
+          onReopenOrder={(row) => setUpdateRow(row)}
         />
 
         {/* Staff performance (screen only) */}
@@ -451,6 +492,17 @@ export default function ReportsPage() {
           onClose={() => setDetailRow(null)}
         />
       )}
+
+      {updateRow?.orderId ? (
+        <ReopenOrderDialog
+          orderId={updateRow.orderId}
+          orderLabel={updateRow.orderLabel}
+          tableLabel={updateRow.tableLabel}
+          paymentId={updateRow.paymentId}
+          onClose={() => setUpdateRow(null)}
+          onChanged={() => { void loadReport(); }}
+        />
+      ) : null}
 
       <style jsx global>{`
         @media print {

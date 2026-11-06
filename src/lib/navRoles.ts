@@ -10,7 +10,6 @@ export const NAV_TABS = [
   { label: 'Void report', href: '/void-report', roles: ['Admin', 'Manager'] as UserRole[] },
   { label: 'Table Bookings', href: '/table-bookings', roles: ['Admin', 'Manager', 'Bartender', 'Cashier'] as UserRole[] },
   { label: 'Post Items', href: '/post-items', roles: ['Admin', 'Manager'] as UserRole[] },
-  { label: 'Dashboard', href: '/manager-dashboard', roles: ['Admin', 'Manager'] as UserRole[] },
   { label: 'Staff', href: '/staff-management', roles: ['Admin'] as UserRole[] },
   { label: 'Analytics', href: '/analytics', roles: ['Admin', 'Manager'] as UserRole[] },
   { label: 'Admin Config', href: '/admin-config', roles: ['Admin'] as UserRole[] },
@@ -23,6 +22,7 @@ const ROUTE_ACCESS: Record<string, UserRole[]> = Object.fromEntries(
 ROUTE_ACCESS['/user-management'] = ['Admin'];
 ROUTE_ACCESS['/zone-management'] = ['Admin', 'Manager'];
 ROUTE_ACCESS['/menu-categories'] = ['Admin', 'Manager'];
+ROUTE_ACCESS['/manager-dashboard'] = ['Admin', 'Manager'];
 ROUTE_ACCESS['/api-spec'] = ['Admin'];
 
 const ROUTE_KEYS = Object.keys(ROUTE_ACCESS).sort((a, b) => b.length - a.length);

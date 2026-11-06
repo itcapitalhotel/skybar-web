@@ -130,7 +130,7 @@ export default function CloseShiftReportPage() {
         {/* Print Header (only visible when printing) */}
         <div className="hidden print:block mb-4">
           <div className="text-center border-b border-border pb-3 mb-3">
-            <h1 className="text-xl font-bold">SkyBar Rooftop Lounge — Close Shift Report</h1>
+            <h1 className="text-xl font-bold">NAKNAK POS — Close Shift Report</h1>
             <p className="text-sm text-muted-foreground">Shift: {shift.shiftId} · Cashier: {shift.cashier} · Terminal: {shift.terminal}</p>
             <p className="text-sm text-muted-foreground">Opened: {shift.openedAt} · Closed: {closedAt}</p>
           </div>
@@ -337,7 +337,7 @@ export default function CloseShiftReportPage() {
 
         {/* Footer summary for print */}
         <div className="hidden print:block mt-4 pt-3 border-t border-border text-center text-xs text-muted-foreground">
-          <p>Generated: {closedAt} · SkyBar POS System · {shift.terminal}</p>
+          <p>Generated: {closedAt} · NAKNAK POS · {shift.terminal}</p>
         </div>
           </>
         )}

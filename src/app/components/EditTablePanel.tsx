@@ -8,6 +8,7 @@ import TableShapePicker from './TableShapePicker';
 interface EditTablePanelProps {
   table: TableData | null;
   saving: boolean;
+  zoneLabel?: string;
   onRename: (tableId: string, label: string) => Promise<void>;
   onDelete: (tableId: string) => Promise<void>;
   onChangeShape: (tableId: string, shape: TableShape) => Promise<void>;
@@ -23,6 +24,7 @@ const STATUS_LABELS: Record<string, string> = {
 export default function EditTablePanel({
   table,
   saving,
+  zoneLabel,
   onRename,
   onDelete,
   onChangeShape,
@@ -59,7 +61,7 @@ export default function EditTablePanel({
         <p className="text-xs text-muted-foreground mt-0.5">
           {STATUS_LABELS[table.status] ?? table.status}
           {' · '}
-          {table.zone.toUpperCase()}
+          {zoneLabel || table.zone}
           {' · '}
           cap {table.capacity}
         </p>

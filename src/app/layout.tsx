@@ -17,11 +17,13 @@ const dmSans = DM_Sans({
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  maximumScale: 1,
+  viewportFit: 'cover',
 };
 
 export const metadata: Metadata = {
-  title: 'SkyBar POS — Rooftop Lounge Point of Sale',
-  description: 'Real-time floor management, ordering, payments, and shift reconciliation for SkyBar Rooftop Lounge.',
+  title: 'NAKNAK POS',
+  description: 'Real-time floor management, ordering, payments, and shift reconciliation for NAKNAK POS.',
   icons: {
     icon: [{ url: '/favicon.ico', type: 'image/x-icon' }],
   },

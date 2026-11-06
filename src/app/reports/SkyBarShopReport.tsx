@@ -1,8 +1,9 @@
 'use client';
 
-import React from 'react';
-import { Eye } from 'lucide-react';
+import React, { useState } from 'react';
+import { Eye, Printer, RotateCcw } from 'lucide-react';
 import type { AnalyticsTransactionDetail } from '@/lib/api/types';
+import { receiptsApi } from '@/lib/api/client';
 import {
   aggregateFinancials,
   aggregateSalesByCategoryType,
@@ -13,6 +14,7 @@ import {
   type MenuCategoryLookup,
   type ReportGridRow,
 } from '@/app/reports/reportDocumentHelpers';
+import { toast } from 'sonner';
 
 const th =
   'border border-gray-300 bg-gray-50 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-gray-600 whitespace-nowrap';
@@ -70,6 +72,7 @@ interface SkyBarShopReportProps {
   menuLookup?: MenuCategoryLookup;
   loading?: boolean;
   onViewOrder?: (paymentId: string) => void;
+  onReopenOrder?: (row: ReportGridRow) => void;
 }
 
 export default function SkyBarShopReport({
@@ -80,6 +83,7 @@ export default function SkyBarShopReport({
   menuLookup,
   loading,
   onViewOrder,
+  onReopenOrder,
 }: SkyBarShopReportProps) {
   const financial = aggregateFinancials(orderDetails);
   const categorySales = aggregateSalesByCategoryType(orderDetails, menuLookup);
@@ -107,7 +111,7 @@ export default function SkyBarShopReport({
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-500 mb-1">
-              SkyBar POS
+              NAKNAK POS
             </p>
             <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">
               Shop &amp; Revenue Report
@@ -232,12 +236,13 @@ export default function SkyBarShopReport({
         <section>
           <h2 className={sectionTitle}>Transaction detail</h2>
           <div className="-mx-2">
-            <table className="w-full min-w-[1480px] border-collapse">
+            <table className="w-full min-w-[1560px] border-collapse">
               <thead>
                 <tr>
                   {[
                     'Order ID',
                     'Table',
+                    'Zone',
                     'Guests',
                     'Items',
                     'Qty',
@@ -262,31 +267,31 @@ export default function SkyBarShopReport({
                     </th>
                   ))}
                   {onViewOrder ? (
-                    <th className={`${th} print:hidden w-10`} aria-label="Detail" />
+                    <th className={`${th} print:hidden w-24`} aria-label="Actions" />
                   ) : null}
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={onViewOrder ? 21 : 20} className={`${td} text-center py-8 text-gray-500`}>
+                    <td colSpan={onViewOrder ? 22 : 21} className={`${td} text-center py-8 text-gray-500`}>
                       Loading line items…
                     </td>
                   </tr>
                 ) : gridRows.length === 0 ? (
                   <tr>
-                    <td colSpan={onViewOrder ? 21 : 20} className={`${td} text-center py-8 text-gray-500`}>
+                    <td colSpan={onViewOrder ? 22 : 21} className={`${td} text-center py-8 text-gray-500`}>
                       No transactions for the selected range.
                     </td>
                   </tr>
                 ) : (
                   gridRows.map((row) => (
-                    <ReportGridRowView key={row.key} row={row} onViewOrder={onViewOrder} />
+                    <ReportGridRowView key={row.key} row={row} onViewOrder={onViewOrder} onReopenOrder={onReopenOrder} />
                   ))
                 )}
                 {gridRows.length > 0 && !loading ? (
                   <tr className="bg-gray-50">
-                    <td className={`${td} font-semibold text-gray-800`} colSpan={7}>
+                    <td className={`${td} font-semibold text-gray-800`} colSpan={8}>
                       Column totals
                     </td>
                     <td className={tdNum}>{formatReportMoney(colTotals.subtotal)}</td>
@@ -311,10 +316,13 @@ export default function SkyBarShopReport({
 function ReportGridRowView({
   row,
   onViewOrder,
+  onReopenOrder,
 }: {
   row: ReportGridRow;
   onViewOrder?: (paymentId: string) => void;
+  onReopenOrder?: (row: ReportGridRow) => void;
 }) {
+  const [printing, setPrinting] = useState(false);
   const showOrderFinancials =
     row.isOrderSummaryOnly
     || Boolean(row.payment && row.status);
@@ -323,10 +331,29 @@ function ReportGridRowView({
     if (row.isOrderSummaryOnly || n > 0) return formatReportMoney(n);
     return '—';
   };
+
+  const handlePrintBill = async () => {
+    if (!row.paymentId || printing) return;
+    setPrinting(true);
+    try {
+      const result = await receiptsApi.print({ paymentId: row.paymentId });
+      if (result.receiptPrinted) {
+        toast.success('Bill printed');
+      } else {
+        toast.error(result.receiptPrintMessage || 'Print sent but printer did not confirm');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to print bill');
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   return (
     <tr className="hover:bg-gray-50/80">
       <td className={`${td} font-medium whitespace-nowrap`}>{row.orderLabel}</td>
       <td className={td}>{row.tableLabel}</td>
+      <td className={`${td} whitespace-nowrap`}>{row.zoneLabel || '—'}</td>
       <td className={`${td} text-center`}>{row.guests}</td>
       <td className={`${td} ${itemCol}`}>
         <span className="line-clamp-2 leading-snug break-words" title={row.itemName}>
@@ -364,14 +391,35 @@ function ReportGridRowView({
       {onViewOrder ? (
         <td className={`${td} text-center print:hidden`}>
           {row.payment && row.status ? (
-            <button
-              type="button"
-              title="View payment detail"
-              onClick={() => onViewOrder(row.paymentId)}
-              className="inline-flex p-1 rounded hover:bg-gray-200"
-            >
-              <Eye size={14} />
-            </button>
+            <div className="inline-flex items-center justify-center gap-0.5">
+              <button
+                type="button"
+                title="View payment detail"
+                onClick={() => onViewOrder(row.paymentId)}
+                className="inline-flex p-1 rounded hover:bg-gray-200"
+              >
+                <Eye size={14} />
+              </button>
+              <button
+                type="button"
+                title="Print bill"
+                disabled={printing}
+                onClick={() => void handlePrintBill()}
+                className="inline-flex p-1 rounded text-amber-600 hover:bg-amber-100 disabled:opacity-40"
+              >
+                <Printer size={14} />
+              </button>
+              {row.orderId && onReopenOrder ? (
+                <button
+                  type="button"
+                  title="Reopen or correct payment"
+                  onClick={() => onReopenOrder(row)}
+                  className="inline-flex p-1 rounded hover:bg-gray-200"
+                >
+                  <RotateCcw size={14} />
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </td>
       ) : null}

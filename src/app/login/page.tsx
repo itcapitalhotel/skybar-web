@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import AppLogo from '@/components/ui/AppLogo';
-import { ShieldCheck, Coffee, CreditCard, LayoutGrid, Delete, ChevronRight, User, Lock } from 'lucide-react';
+import { ShieldCheck, Coffee, CreditCard, LayoutGrid, ChevronRight, User, Lock } from 'lucide-react';
+import PinPad from '@/components/PinPad';
 import { staffApi, authApi } from '@/lib/api/client';
 import { persistLoginSession } from '@/lib/api/config';
 import { registerStaffNames } from '@/lib/staffDisplay';
@@ -41,6 +42,7 @@ export default function LoginPage() {
   const [shake, setShake] = useState(false);
   const [success, setSuccess] = useState(false);
   const [timeStr, setTimeStr] = useState('');
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     staffApi.list()
@@ -62,60 +64,72 @@ export default function LoginPage() {
     return () => clearInterval(interval);
   }, []);
 
+  const failPin = () => {
+    setError('Incorrect PIN. Ask a manager to reset it.');
+    setShake(true);
+    setTimeout(() => { setShake(false); setPin(''); }, 600);
+  };
+
+  const tryLogin = async (staff: StaffUser, enteredPin: string) => {
+    if (submittingRef.current || success) return;
+    submittingRef.current = true;
+    try {
+      try {
+        const pinResult = await staffApi.verifyPin(staff.id, { pin: enteredPin });
+        if (!(pinResult.success || pinResult.valid)) {
+          throw new Error(pinResult.message || 'Invalid PIN');
+        }
+        const loginResult = await authApi.login({
+          email: staff.email,
+          password: enteredPin,
+        });
+        saveSession(loginResult, staff);
+        setSuccess(true);
+        setTimeout(() => router.push('/'), 800);
+        return;
+      } catch {
+        const loginResult = await authApi.login({
+          email: staff.email,
+          password: enteredPin,
+        });
+        saveSession(loginResult, staff);
+        setSuccess(true);
+        setTimeout(() => router.push('/'), 800);
+      }
+    } catch {
+      failPin();
+    } finally {
+      submittingRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedStaff || pin.length !== 4 || success) return;
+    const t = window.setTimeout(() => {
+      void tryLogin(selectedStaff, pin);
+    }, 120);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pin, selectedStaff, success]);
+
   const handleSelectStaff = (staff: StaffUser) => {
     setSelectedStaff(staff);
     setPin('');
     setError('');
-  };
-
-  const handleKey = (key: string) => {
-    if (pin.length >= 4 || !selectedStaff) return;
-    const newPin = pin + key;
-    setPin(newPin);
-    setError('');
-    if (newPin.length === 4) {
-      setTimeout(async () => {
-        try {
-          const pinResult = await staffApi.verifyPin(selectedStaff.id, { pin: newPin });
-          if (pinResult.success || pinResult.valid) {
-            const loginResult = await authApi.login({
-              email: selectedStaff.email,
-              password: newPin,
-            });
-            saveSession(loginResult, selectedStaff);
-            setSuccess(true);
-            setTimeout(() => router.push('/'), 800);
-            return;
-          }
-        } catch {
-          /* try email login only below */
-        }
-
-        try {
-          const loginResult = await authApi.login({
-            email: selectedStaff.email,
-            password: newPin,
-          });
-          saveSession(loginResult, selectedStaff);
-          setSuccess(true);
-          setTimeout(() => router.push('/'), 800);
-        } catch {
-          setError('Incorrect PIN. Try again.');
-          setShake(true);
-          setTimeout(() => { setShake(false); setPin(''); }, 600);
-        }
-      }, 120);
-    }
+    setSuccess(false);
+    submittingRef.current = false;
   };
 
   const handleBack = () => {
     setSelectedStaff(null);
     setPin('');
     setError('');
+    setSuccess(false);
+    submittingRef.current = false;
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-[100dvh] bg-background flex flex-col items-center justify-start sm:justify-center p-4 py-8 relative overflow-x-hidden overflow-y-auto">
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-cyan-500/5 rounded-full blur-3xl" />
         <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl" />
@@ -126,8 +140,7 @@ export default function LoginPage() {
           <div className="flex items-center gap-3 mb-3">
             <AppLogo size={40} />
             <div>
-              <h1 className="text-2xl font-bold text-foreground tracking-tight">SkyBar POS</h1>
-              <p className="text-sm text-muted-foreground">Rooftop Lounge — Point of Sale</p>
+              <h1 className="text-2xl font-bold text-foreground tracking-tight">NAKNAK POS</h1>
             </div>
           </div>
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/40 border border-border text-xs text-muted-foreground">
@@ -160,8 +173,9 @@ export default function LoginPage() {
                   return (
                     <button
                       key={staff.id}
+                      type="button"
                       onClick={() => handleSelectStaff(staff)}
-                      className="group flex flex-col items-center gap-3 p-4 rounded-xl border border-border bg-muted/20 hover:bg-muted/40 hover:border-primary/40 transition-all duration-200"
+                      className="group flex flex-col items-center gap-3 p-4 rounded-xl border border-border bg-muted/20 hover:bg-muted/40 hover:border-primary/40 transition-all duration-200 touch-manipulation"
                     >
                       <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/30 flex items-center justify-center text-lg font-bold text-foreground">
                         {staff.avatar}
@@ -181,7 +195,7 @@ export default function LoginPage() {
             )}
           </div>
         ) : (
-          <div className="flex flex-col sm:flex-row gap-4 items-start justify-center slide-up">
+          <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-start justify-center slide-up pb-8">
             <div className="glass-card-elevated rounded-2xl border border-border p-5 w-full sm:w-56 flex-shrink-0">
               <div className="flex flex-col items-center gap-3 text-center">
                 <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/30 flex items-center justify-center text-xl font-bold">
@@ -194,7 +208,7 @@ export default function LoginPage() {
                     {selectedStaff.role}
                   </div>
                 </div>
-                <button onClick={handleBack} className="w-full mt-1 py-2 rounded-lg text-xs text-muted-foreground hover:text-foreground border border-border hover:bg-muted/40 transition-all">
+                <button type="button" onClick={handleBack} className="w-full mt-1 py-2 rounded-lg text-xs text-muted-foreground hover:text-foreground border border-border hover:bg-muted/40 transition-all touch-manipulation">
                   ← Change Staff
                 </button>
               </div>
@@ -205,7 +219,7 @@ export default function LoginPage() {
                 <Lock size={14} className="text-primary" />
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Enter PIN</h3>
-                  <p className="text-xs text-muted-foreground">4-digit staff PIN</p>
+                  <p className="text-xs text-muted-foreground">Use the built-in PIN keyboard below</p>
                 </div>
               </div>
 
@@ -223,14 +237,14 @@ export default function LoginPage() {
               {error && <p className="text-center text-xs text-rose-400 mb-3">{error}</p>}
               {success && <p className="text-center text-xs text-emerald-400 mb-3">✓ Access granted — loading...</p>}
 
-              <div className="grid grid-cols-3 gap-2.5">
-                {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(k => (
-                  <button key={`pinkey-${k}`} onClick={() => handleKey(k)} disabled={success} className="pin-key rounded-xl h-12 text-lg font-semibold disabled:opacity-40">{k}</button>
-                ))}
-                <button onClick={() => { setPin(''); setError(''); }} disabled={success} className="pin-key rounded-xl h-12 text-xs text-muted-foreground">CLR</button>
-                <button onClick={() => handleKey('0')} disabled={success} className="pin-key rounded-xl h-12 text-lg font-semibold">0</button>
-                <button onClick={() => setPin(p => p.slice(0, -1))} disabled={success} className="pin-key rounded-xl h-12 flex items-center justify-center"><Delete size={16} /></button>
-              </div>
+              <PinPad
+                value={pin}
+                disabled={success}
+                onChange={(next) => {
+                  setPin(next);
+                  setError('');
+                }}
+              />
             </div>
           </div>
         )}

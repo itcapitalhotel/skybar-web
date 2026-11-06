@@ -57,9 +57,9 @@ const DEFAULT_CONFIG: ConfigState = {
   currencySymbol: '$',
   printerIp: '192.168.1.100',
   printerPort: '9100',
-  houseRules: `Welcome to SkyBar Rooftop Lounge.\n\n1. Minimum spend applies to all VIP and Cabana tables.\n2. Management reserves the right to refuse service.\n3. No outside food or beverages permitted.\n4. Dress code strictly enforced — smart casual required.\n5. Last orders at 1:30 AM. Venue closes at 2:00 AM.\n6. All prices include applicable taxes and service charge.\n7. Guests are responsible for their personal belongings.\n8. Photography for personal use only — no commercial shoots without prior approval.`,
-  receiptHeader: 'SkyBar Rooftop Lounge\nLevel 32, Skyline Tower\nTel: +1 (555) 987-6543',
-  receiptFooter: 'Thank you for visiting SkyBar!\nFollow us @SkyBarLounge',
+  houseRules: `Welcome to NAKNAK POS.\n\n1. Minimum spend applies to all VIP and Cabana tables.\n2. Management reserves the right to refuse service.\n3. No outside food or beverages permitted.\n4. Dress code strictly enforced — smart casual required.\n5. Last orders at 1:30 AM. Venue closes at 2:00 AM.\n6. All prices include applicable taxes and service charge.\n7. Guests are responsible for their personal belongings.\n8. Photography for personal use only — no commercial shoots without prior approval.`,
+  receiptHeader: 'NAKNAK POS\nLevel 32, Skyline Tower\nTel: +1 (555) 987-6543',
+  receiptFooter: 'Thank you for visiting NAKNAK POS!',
 };
 
 function isDraftZonePrinterId(printerId: string): boolean {

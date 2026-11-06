@@ -14,7 +14,7 @@ import { toast } from 'sonner';
 interface MenuOverlayProps {
   table: TableData;
   onClose: () => void;
-  onAddItems: (tableId: string, items: OrderItem[]) => void | Promise<void>;
+  onAddItems: (tableId: string, items: OrderItem[], orderNote?: string) => void | Promise<void>;
   showAll?: boolean;
   tableNote?: string;
 }
@@ -98,6 +98,7 @@ export default function MenuOverlay({
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [loadingMenu, setLoadingMenu] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [sendNote, setSendNote] = useState(tableNote);
   const [sizePickerItem, setSizePickerItem] = useState<MenuItem | null>(null);
   const cartLineMeasureRef = useRef<HTMLDivElement | null>(null);
   const [cartListViewportHeight, setCartListViewportHeight] = useState<number | undefined>();
@@ -188,6 +189,14 @@ export default function MenuOverlay({
     });
   };
 
+  const updateCartNote = (menuItemId: string, sizeIndex: number, note: string) => {
+    setCart((prev) =>
+      prev.map((c) =>
+        c.menuItem.id === menuItemId && c.sizeIndex === sizeIndex ? { ...c, note } : c,
+      ),
+    );
+  };
+
   const updateCartQty = (menuItemId: string, sizeIndex: number, delta: number) => {
     setCart((prev) =>
       prev
@@ -235,11 +244,11 @@ export default function MenuOverlay({
         unitPrice,
         status: 'Queued' as const,
         size: sizeLabel,
-        notes: c.note || tableNote || undefined,
+        notes: c.note.trim() || undefined,
       };
     });
     try {
-      await onAddItems(table.id, newItems);
+      await onAddItems(table.id, newItems, sendNote.trim() || undefined);
       setCart([]);
       onClose();
     } catch (err) {
@@ -434,6 +443,13 @@ export default function MenuOverlay({
                             <p className="text-[10px] text-muted-foreground mt-0.5">
                               ${unit.toFixed(2)} each
                             </p>
+                            <input
+                              type="text"
+                              value={entry.note}
+                              onChange={(e) => updateCartNote(entry.menuItem.id, entry.sizeIndex, e.target.value)}
+                              placeholder="Note for this item only"
+                              className="mt-1.5 w-full rounded-lg border border-border bg-muted/30 px-2 py-1 text-[11px] text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:border-primary/40"
+                            />
                           </div>
                           <button
                             type="button"
@@ -476,6 +492,16 @@ export default function MenuOverlay({
               </div>
 
               <div className="p-4 border-t border-border space-y-2 bg-background/50">
+                <label className="block">
+                  <span className="text-[10px] font-medium text-muted-foreground">Note for these items</span>
+                  <textarea
+                    value={sendNote}
+                    onChange={(e) => setSendNote(e.target.value)}
+                    rows={2}
+                    placeholder="Printed under every new item, unless that item has its own note"
+                    className="mt-1 w-full resize-none rounded-lg border border-border bg-background px-2.5 py-2 text-xs text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:border-primary/40"
+                  />
+                </label>
                 <div className="flex justify-between text-xs text-muted-foreground">
                   <span>{cartSummary.pieces} item{cartSummary.pieces !== 1 ? 's' : ''}</span>
                   <span className="font-semibold text-foreground text-sm tabular-nums">

@@ -7,7 +7,7 @@ import { zoneToMeta } from '@/lib/api/mappers';
 import { Move, Save, RotateCcw, Users, Clock, DollarSign, Circle, Square, LayoutGrid, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import { formatTimer } from './floorData';
 
-type ZoneFilter = 'all' | 'vip' | 'bar' | 'terrace' | 'cabana';
+type ZoneFilter = string; // 'all' | zone id from GET /zones
 
 interface FloorCanvasProps {
   tables: TableData[];
@@ -674,7 +674,14 @@ export default function FloorCanvas({
 
   if (!currentZone) return null;
 
-  const zoneTables = tables.filter(t => t.zone === currentZone.id);
+  const zoneTables = tables.filter((t) => {
+    if (t.zone === currentZone.id) return true;
+    // Fallback: match by label when API stores slug/label instead of id
+    const key = String(t.zone ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const idKey = currentZone.id.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const labelKey = currentZone.label.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    return key.length > 0 && (key === idKey || key === labelKey);
+  });
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">

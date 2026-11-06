@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Plus, Search, User, Edit2, Trash2, X, CheckCircle2, Eye, EyeOff, Zap } from 'lucide-react';
-import { usersApi } from '@/lib/api/client';
+import { staffApi, usersApi } from '@/lib/api/client';
 import type { StaffUser, UserRole, UserStatus, CreateUserRequest, UpdateUserRequest } from '@/lib/api/types';
 
 const ROLE_CONFIG: Record<UserRole, { color: string; bg: string; border: string; icon: string }> = {
@@ -42,7 +42,8 @@ export default function UserManagementPage() {
   const [form, setForm] = useState<UserFormData>(EMPTY_FORM);
   const [showPassword, setShowPassword] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // ── Fetch users from API ──────────────────────────────────────────────────
   useEffect(() => {
@@ -55,8 +56,8 @@ export default function UserManagementPage() {
     return () => { cancelled = true; };
   }, []);
 
-  const showToast = (msg: string) => {
-    setToast(msg);
+  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
+    setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
 
@@ -73,53 +74,68 @@ export default function UserManagementPage() {
   };
 
   const handleSave = async () => {
-    if (!form.name.trim() || !form.email.trim()) return;
-    if (editingUser) {
-      const payload: UpdateUserRequest = {
-        name: form.name,
-        email: form.email,
-        role: form.role,
-        terminalId: form.terminalId || undefined,
-      };
-      try {
-        const updated = await usersApi.update(editingUser.id, payload);
-        setUsers(prev => prev.map(u => u.id === editingUser.id ? updated : u));
-      } catch {
-        setUsers(prev => prev.map(u => u.id === editingUser.id
-          ? { ...u, name: form.name, email: form.email, role: form.role, terminalId: form.terminalId || '—' }
-          : u
-        ));
-      }
-      showToast(`${form.name} updated successfully`);
-    } else {
-      const payload: CreateUserRequest = {
-        name: form.name,
-        email: form.email,
-        role: form.role,
-        terminalId: form.terminalId || undefined,
-        password: form.password,
-      };
-      try {
-        const created = await usersApi.create(payload);
-        setUsers(prev => [created, ...prev]);
-      } catch {
-        const newUser: StaffUser = {
-          id: `u${Date.now()}`,
+    if (!form.name.trim() || !form.email.trim()) {
+      showToast('Name and email are required', 'error');
+      return;
+    }
+    const credential = form.password.trim();
+    if (!editingUser && credential.length < 4) {
+      showToast('Enter a 4-digit PIN (or password, min 4 characters)', 'error');
+      return;
+    }
+    if (editingUser && credential && credential.length < 4) {
+      showToast('PIN / password must be at least 4 characters', 'error');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      if (editingUser) {
+        const payload: UpdateUserRequest = {
           name: form.name,
           email: form.email,
           role: form.role,
-          status: 'inactive',
-          terminalId: form.terminalId || '—',
-          avatar: form.name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2),
-          joinDate: new Date().toISOString().split('T')[0],
-          lastActive: 'Never',
-          shiftsThisWeek: 0,
+          terminalId: form.terminalId || undefined,
         };
-        setUsers(prev => [newUser, ...prev]);
+        const updated = await usersApi.update(editingUser.id, payload);
+        if (credential) {
+          // Prefer setPin for 4–6 digit numeric PINs (syncs StaffPin + passwordHash)
+          if (/^\d{4,6}$/.test(credential)) {
+            await staffApi.setPin(editingUser.id, { pin: credential });
+          } else {
+            await usersApi.resetPassword(editingUser.id, credential);
+          }
+        }
+        setUsers(prev => prev.map(u => u.id === editingUser.id
+          ? { ...updated, hasPin: credential ? true : updated.hasPin }
+          : u
+        ));
+        showToast(credential ? `${form.name} updated · credentials reset` : `${form.name} updated successfully`);
+      } else {
+        const payload: CreateUserRequest = {
+          name: form.name,
+          email: form.email,
+          role: form.role,
+          terminalId: form.terminalId || undefined,
+          password: credential,
+        };
+        const created = await usersApi.create(payload);
+        if (/^\d{4,6}$/.test(credential)) {
+          try {
+            await staffApi.setPin(created.id, { pin: credential });
+          } catch {
+            /* create already syncs StaffPin on fixed API */
+          }
+        }
+        setUsers(prev => [{ ...created, hasPin: true }, ...prev]);
+        showToast(`${form.name} created — they can log in with their PIN`);
       }
-      showToast(`${form.name} created successfully`);
+      setDrawerOpen(false);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Save failed', 'error');
+    } finally {
+      setSaving(false);
     }
-    setDrawerOpen(false);
   };
 
   const handleDelete = async (id: string) => {
@@ -158,9 +174,13 @@ export default function UserManagementPage() {
     <div className="min-h-screen bg-background text-foreground" style={{ fontFamily: 'DM Sans, sans-serif' }}>
       {/* Toast */}
       {toast && (
-        <div className="fixed top-4 right-4 md:top-6 md:right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-sm font-medium shadow-2xl animate-fade-in">
+        <div className={`fixed top-4 right-4 md:top-6 md:right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium shadow-2xl animate-fade-in ${
+          toast.type === 'error'
+            ? 'bg-rose-500/15 border border-rose-500/30 text-rose-400'
+            : 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400'
+        }`}>
           <CheckCircle2 size={16} />
-          {toast}
+          {toast.msg}
         </div>
       )}
 
@@ -425,29 +445,32 @@ export default function UserManagementPage() {
                 />
               </div>
 
-              {/* Password */}
-              {!editingUser && (
-                <div>
-                  <label className="block text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">PIN / Password</label>
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={form.password}
-                      onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                      placeholder="4-digit PIN or password"
-                      className="w-full px-4 py-3 pr-10 rounded-xl text-sm text-foreground placeholder:text-muted-foreground outline-none transition-all"
-                      style={{ background: 'rgba(30,41,59,0.6)', border: '1px solid rgba(100,116,139,0.2)' }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(v => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
-                  </div>
+              {/* PIN / Password — required on create; optional reset on edit */}
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
+                  {editingUser ? 'Reset PIN / Password' : 'Login PIN *'}
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={form.password}
+                    onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                    placeholder={editingUser ? 'Leave blank to keep current' : '4-digit PIN (used on POS login)'}
+                    className="w-full px-4 py-3 pr-10 rounded-xl text-sm text-foreground placeholder:text-muted-foreground outline-none transition-all"
+                    style={{ background: 'rgba(30,41,59,0.6)', border: '1px solid rgba(100,116,139,0.2)' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
                 </div>
-              )}
+                <p className="text-[11px] text-muted-foreground mt-1.5">
+                  POS login uses this as both Staff PIN and password — prefer a 4-digit PIN.
+                </p>
+              </div>
             </div>
 
             {/* Footer */}
@@ -461,11 +484,11 @@ export default function UserManagementPage() {
               </button>
               <button
                 onClick={handleSave}
-                disabled={!form.name.trim() || !form.email.trim()}
+                disabled={saving || !form.name.trim() || !form.email.trim()}
                 className="flex-1 py-3 rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ background: 'rgba(168,85,247,0.2)', border: '1px solid rgba(168,85,247,0.4)', color: '#a855f7' }}
               >
-                {editingUser ? 'Save Changes' : 'Create User'}
+                {saving ? 'Saving…' : editingUser ? 'Save Changes' : 'Create User'}
               </button>
             </div>
           </div>
