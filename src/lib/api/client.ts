@@ -1,11 +1,12 @@
 import { clearAuthToken, getApiBaseUrl, getAuthToken } from './config';
-import { mapMenuItems } from './mappers';
+import { mapMenuItems, normalizeZone, normalizeZoneList } from './mappers';
 import { normalizeCategoryType } from '@/lib/menuCategory';
 import { normalizeOrderDetailResponse } from './paymentDetailMapper';
 import type {
   LoginRequest, LoginResponse, ManagerPinVerifyRequest, ManagerPinVerifyResponse,
   StaffUser, CreateUserRequest, UpdateUserRequest,
   ZoneData, ZonePrinter, CreateZonePrinterRequest, UpdateZonePrinterRequest,
+  CreateZoneKitchenPrinterRequest,
   KitchenPrinter, CategoryPrinterMapping, CategoryPrintersResponse, CategoryKitchenPrinter,
   CreateZoneRequest, UpdateZoneRequest,
   TableData, CreateTableRequest, TableLayoutUpdate, MergeTablesRequest, MergeTablesResponse,
@@ -51,24 +52,62 @@ function buildUrl(path: string, params?: Record<string, string | number | boolea
   return url.toString();
 }
 
+/** Lists that rarely change. Tables, bookings, and orders stay uncached. */
+const GET_CACHE_TTL_MS: Record<string, number> = {
+  '/auth/me': 60_000,
+  '/zones': 60_000,
+  '/menu': 120_000,
+  '/menu/categories': 120_000,
+};
+
+const responseCache = new Map<string, { at: number; data: unknown }>();
+const inflightGets = new Map<string, Promise<unknown>>();
+
+function cacheTtl(path: string): number {
+  if (GET_CACHE_TTL_MS[path]) return GET_CACHE_TTL_MS[path];
+  if (path.startsWith('/menu/categories')) return GET_CACHE_TTL_MS['/menu/categories'];
+  return 0;
+}
+
+function invalidateResponseCache(path: string) {
+  const root = `/${path.split('/').filter(Boolean)[0] ?? ''}`;
+  for (const key of responseCache.keys()) {
+    if (key.includes(root)) responseCache.delete(key);
+  }
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, params } = options;
   const token = getAuthToken();
+  const url = buildUrl(path, params);
+  const cacheKey = `${method} ${url}`;
+  const ttl = method === 'GET' ? cacheTtl(path) : 0;
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    Accept: 'application/json',
-  };
+  if (ttl > 0) {
+    const hit = responseCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < ttl) return hit.data as T;
+  }
+
+  if (method === 'GET') {
+    const pending = inflightGets.get(cacheKey);
+    if (pending) return pending as Promise<T>;
+  } else {
+    invalidateResponseCache(path);
+  }
+
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(buildUrl(path, params), {
+  const pending = fetch(url, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  }).then(async (res) => {
 
   if (!res.ok) {
     if (res.status === 401 && typeof window !== 'undefined') {
+      responseCache.clear();
       clearAuthToken();
       if (!window.location.pathname.startsWith('/login')) {
         window.location.replace('/login');
@@ -83,8 +122,22 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     throw new Error(errorMessage);
   }
 
-  if (res.status === 204) return undefined as unknown as T;
-  return res.json() as Promise<T>;
+    if (res.status === 204) return undefined as unknown as T;
+    return res.json() as Promise<T>;
+  });
+
+  if (method === 'GET') {
+    inflightGets.set(cacheKey, pending);
+    // `.finally()` returns its own promise. Leave it unhandled and a failed GET
+    // shows up as a runtime error even when the caller already caught it.
+    pending.finally(() => {
+      if (inflightGets.get(cacheKey) === pending) inflightGets.delete(cacheKey);
+    }).catch(() => {});
+  }
+
+  const data = await pending;
+  if (ttl > 0) responseCache.set(cacheKey, { at: Date.now(), data });
+  return data;
 }
 
 const get = <T>(path: string, params?: RequestOptions['params']) => request<T>(path, { method: 'GET', params });
@@ -135,14 +188,33 @@ export const staffApi = {
 
 // ─── Zones ────────────────────────────────────────────────────────────────────
 export const zonesApi = {
-  list: () => get<ZoneData[]>('/zones'),
-  get: (id: string) => get<ZoneData>(`/zones/${id}`),
-  create: (data: CreateZoneRequest) => post<ZoneData>('/zones', data),
-  update: (id: string, data: UpdateZoneRequest) => put<ZoneData>(`/zones/${id}`, data),
-  delete: (id: string) => del<{ message: string }>(`/zones/${id}`),
-  toggle: (id: string) => patch<ZoneData>(`/zones/${id}/toggle`),
+  list: async () => normalizeZoneList(await get<unknown>('/zones')),
+  get: async (id: string) => {
+    const zone = normalizeZone(await get<unknown>(`/zones/${id}`));
+    if (!zone) throw new Error('Zone not found');
+    return zone;
+  },
+  create: async (data: CreateZoneRequest) => {
+    const created = normalizeZone(await post<unknown>('/zones', data));
+    if (created) return created;
+    const list = await zonesApi.list();
+    const match = list.find((z) => z.label === data.label);
+    if (match) return match;
+    throw new Error('Zone was created but could not be read back');
+  },
+  update: async (id: string, data: UpdateZoneRequest) => {
+    const updated = normalizeZone(await put<unknown>(`/zones/${id}`, data));
+    if (updated) return updated;
+    return zonesApi.get(id);
+  },
+  delete: (id: string) => del<void>(`/zones/${id}`),
+  toggle: async (id: string) => {
+    const updated = normalizeZone(await patch<unknown>(`/zones/${id}/toggle`));
+    if (updated) return updated;
+    return zonesApi.get(id);
+  },
   /** @deprecated use toggle */
-  toggleActive: (id: string) => patch<ZoneData>(`/zones/${id}/toggle`),
+  toggleActive: (id: string) => zonesApi.toggle(id),
   getPrinters: (zoneId: string) => get<ZonePrinter[]>(`/zones/${zoneId}/printers`),
   addPrinter: (zoneId: string, data: CreateZonePrinterRequest) =>
     post<ZonePrinter>(`/zones/${zoneId}/printers`, data),
@@ -152,6 +224,16 @@ export const zonesApi = {
     del<{ message: string }>(`/zones/${zoneId}/printers/${printerId}`),
   testPrinter: (zoneId: string, printerId: string) =>
     post<PrinterTestResponse>(`/zones/${zoneId}/printers/${printerId}/test`),
+  getKitchenPrinters: (zoneId: string) =>
+    get<ZonePrinter[]>(`/zones/${zoneId}/kitchen-printers`),
+  addKitchenPrinter: (zoneId: string, data: CreateZoneKitchenPrinterRequest) =>
+    post<ZonePrinter>(`/zones/${zoneId}/kitchen-printers`, data),
+  updateKitchenPrinter: (zoneId: string, printerId: string, data: CreateZoneKitchenPrinterRequest) =>
+    put<ZonePrinter>(`/zones/${zoneId}/kitchen-printers/${printerId}`, data),
+  deleteKitchenPrinter: (zoneId: string, printerId: string) =>
+    del<{ message: string }>(`/zones/${zoneId}/kitchen-printers/${printerId}`),
+  testKitchenPrinter: (zoneId: string, printerId: string) =>
+    post<PrinterTestResponse>(`/zones/${zoneId}/kitchen-printers/${printerId}/test`),
 };
 
 // ─── Kitchen printers (global list for picker — not receipt zone_printers) ───

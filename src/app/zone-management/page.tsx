@@ -6,6 +6,7 @@ import LockModal from '@/components/LockModal';
 import Link from 'next/link';
 import { Plus, Edit2, Trash2, X, CheckCircle2, Layers, Save } from 'lucide-react';
 import { zonesApi } from '@/lib/api/client';
+import { useAuthRole } from '@/hooks/useAuthUser';
 import type { ZoneData, CreateZoneRequest, UpdateZoneRequest } from '@/lib/api/types';
 
 const COLOR_PRESETS = [
@@ -30,6 +31,7 @@ const EMPTY_FORM: ZoneFormData = {
 };
 
 export default function ZoneManagementPage() {
+  const canDelete = useAuthRole() === 'Admin';
   const [lockOpen, setLockOpen] = useState(false);
   const [zones, setZones] = useState<ZoneData[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -233,13 +235,16 @@ export default function ZoneManagementPage() {
                   >
                     <Edit2 size={11} />
                   </button>
-                  <button
-                    onClick={() => setDeleteConfirm(zone.id)}
-                    className="w-6 md:w-7 h-6 md:h-7 rounded-lg flex items-center justify-center transition-all"
-                    style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)', color: '#f43f5e' }}
-                  >
-                    <Trash2 size={11} />
-                  </button>
+                  {canDelete && (
+                    <button
+                      onClick={() => setDeleteConfirm(zone.id)}
+                      className="w-6 md:w-7 h-6 md:h-7 rounded-lg flex items-center justify-center transition-all"
+                      style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)', color: '#f43f5e' }}
+                      title="Delete zone"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -461,7 +466,7 @@ export default function ZoneManagementPage() {
       )}
 
       {/* Delete Confirm */}
-      {deleteConfirm && (
+      {canDelete && deleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setDeleteConfirm(null)} />
           <div className="relative rounded-2xl p-6 w-80 text-center" style={{ background: '#0d1b2e', border: '1px solid rgba(244,63,94,0.3)' }}>

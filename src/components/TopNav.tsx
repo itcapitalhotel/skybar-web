@@ -53,16 +53,14 @@ export default function TopNav({ onLockTerminal }: TopNavProps) {
 
   return (
     <header className="glass-card-elevated sticky top-0 z-40 border-b border-border">
-      <div className="flex items-center justify-between px-3 md:px-4 lg:px-6 h-14 md:h-16">
-        <div className="flex items-center gap-2 md:gap-3 min-w-0">
-          <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between px-3 md:px-4 lg:px-6 h-14 md:h-16 gap-2">
+        <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
+          <div className="flex items-center gap-2 shrink-0">
             <AppLogo size={28} />
-            <div className="hidden sm:block shrink-0">
-              <span className="font-semibold text-sm text-foreground leading-tight block whitespace-nowrap">NAKNAK POS</span>
-            </div>
+            <span className="font-semibold text-sm text-foreground leading-tight whitespace-nowrap">NAKNAK POS</span>
           </div>
 
-          <nav className="hidden md:flex items-center ml-3 lg:ml-6 gap-0.5 lg:gap-1 overflow-x-auto scrollbar-none">
+          <nav className="hidden md:flex items-center ml-1 lg:ml-4 gap-0.5 lg:gap-1 min-w-0 overflow-x-auto scrollbar-none">
             {visibleTabs.map((tab) => {
               const isActive = tab.href === '/' ? pathname === '/' : pathname.startsWith(tab.href);
               return (
@@ -82,7 +80,7 @@ export default function TopNav({ onLockTerminal }: TopNavProps) {
           </nav>
         </div>
 
-        <div className="flex items-center gap-1 md:gap-1.5">
+        <div className="flex items-center gap-1 md:gap-1.5 shrink-0">
           <div className="hidden lg:flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-muted/50 border border-border">
             <div className="w-6 h-6 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center">
               <User size={12} className="text-primary" />

@@ -9,6 +9,7 @@ import {
   Star, Eye, EyeOff, RefreshCw, Tag, Layers,
 } from 'lucide-react';
 import { menuApi, menuCategoryApi } from '@/lib/api/client';
+import { useAuthRole } from '@/hooks/useAuthUser';
 import type { ApiMenuItem, MenuCategory, MenuCategoryType, MenuItemSize } from '@/lib/api/types';
 import {
   MENU_CATEGORY_TYPE_OPTIONS,
@@ -88,6 +89,7 @@ function formToPayload(form: ItemFormData): Partial<ApiMenuItem> | null {
 }
 
 export default function PostItemsPage() {
+  const canDelete = useAuthRole() === 'Admin';
   const [lockOpen, setLockOpen] = useState(false);
   const [items, setItems] = useState<ApiMenuItem[]>([]);
   const [categories, setCategories] = useState<MenuCategory[]>([]);
@@ -477,7 +479,7 @@ export default function PostItemsPage() {
                       >
                         <Edit2 size={12} /> Edit
                       </button>
-                      {deleteConfirm === item.id ? (
+                      {canDelete && (deleteConfirm === item.id ? (
                         <>
                           <button
                             onClick={() => void handleDelete(item.id)}
@@ -499,7 +501,7 @@ export default function PostItemsPage() {
                         >
                           <Trash2 size={12} />
                         </button>
-                      )}
+                      ))}
                     </div>
                   </div>
                 </div>

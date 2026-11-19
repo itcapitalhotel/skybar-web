@@ -194,11 +194,13 @@ export default function OrderPanel({
                 }`}
               >
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
+                  <p className="text-xs font-medium text-foreground leading-snug break-words">
                     {item.status === 'Voided' || !onUpdateQty ? (
-                      <span className="text-xs font-semibold text-muted-foreground text-tabular">{item.qty}x</span>
+                      <span className="font-semibold text-muted-foreground text-tabular">{item.qty}x </span>
                     ) : null}
-                    <span className="text-xs font-medium text-foreground truncate">{item.name}</span>
+                    {item.name}
+                  </p>
+                  <div className="flex items-center gap-1.5 flex-wrap mt-1">
                     {item.size ? (
                       <span className="text-[10px] font-medium text-primary/90 bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded-md">
                         {item.size}

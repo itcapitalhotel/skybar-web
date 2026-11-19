@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Plus, Search, User, Edit2, Trash2, X, CheckCircle2, Eye, EyeOff, Zap } from 'lucide-react';
 import { staffApi, usersApi } from '@/lib/api/client';
+import { useAuthRole } from '@/hooks/useAuthUser';
 import type { StaffUser, UserRole, UserStatus, CreateUserRequest, UpdateUserRequest } from '@/lib/api/types';
 
 const ROLE_CONFIG: Record<UserRole, { color: string; bg: string; border: string; icon: string }> = {
@@ -31,7 +32,21 @@ interface UserFormData {
 
 const EMPTY_FORM: UserFormData = { name: '', email: '', role: 'Bartender', terminalId: '', password: '' };
 
+function formatLastActive(value?: string) {
+  if (!value || value === '—') return '—';
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return value;
+  return dt.toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export default function UserManagementPage() {
+  const canDelete = useAuthRole() === 'Admin';
   const [users, setUsers] = useState<StaffUser[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -307,7 +322,7 @@ export default function UserManagementPage() {
                       <span className={`w-1.5 h-1.5 rounded-full ${statusCfg.dot} ${user.status === 'on_shift' ? 'animate-pulse' : ''}`} />
                       <span className={`text-xs font-medium ${statusCfg.color}`}>{statusCfg.label}</span>
                     </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{user.lastActive}</p>
+                    <p className="text-[10px] text-foreground/80 mt-0.5 leading-snug">{formatLastActive(user.lastActive)}</p>
                   </div>
                   {/* Terminal */}
                   <div className="col-span-2 hidden md:block">
@@ -332,14 +347,16 @@ export default function UserManagementPage() {
                     >
                       <Zap size={12} />
                     </button>
-                    <button
-                      onClick={() => setDeleteConfirm(user.id)}
-                      className="w-7 h-7 rounded-lg flex items-center justify-center transition-all"
-                      style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)', color: '#f43f5e' }}
-                      title="Delete user"
-                    >
-                      <Trash2 size={12} />
-                    </button>
+                    {canDelete && (
+                      <button
+                        onClick={() => setDeleteConfirm(user.id)}
+                        className="w-7 h-7 rounded-lg flex items-center justify-center transition-all"
+                        style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)', color: '#f43f5e' }}
+                        title="Delete user"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -496,7 +513,7 @@ export default function UserManagementPage() {
       )}
 
       {/* Delete Confirm Modal */}
-      {deleteConfirm && (
+      {canDelete && deleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setDeleteConfirm(null)} />
           <div className="relative rounded-2xl p-6 w-80 text-center" style={{ background: '#0d1b2e', border: '1px solid rgba(244,63,94,0.3)' }}>

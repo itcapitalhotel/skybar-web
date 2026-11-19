@@ -13,11 +13,22 @@ interface GuestInfoModalProps {
   onConfirm: (guestCount: number, tableNote: string) => void;
   /** Optional preloaded zones from the floor map (avoids an extra fetch). */
   zones?: ZoneData[];
+  /** Party size from a booking. Falls back to the table, then 2. */
+  initialGuests?: number;
+  /** Booking note, shown in the same field as a walk-in table note. */
+  initialNote?: string;
+  /** Guest name from the booking, shown under the table label. */
+  guestName?: string;
 }
 
-export default function GuestInfoModal({ table, onClose, onConfirm, zones: zonesProp }: GuestInfoModalProps) {
-  const [guestCount, setGuestCount] = useState<number>(2);
-  const [tableNote, setTableNote] = useState<string>('');
+export default function GuestInfoModal({ table, onClose, onConfirm, zones: zonesProp, initialGuests, initialNote, guestName }: GuestInfoModalProps) {
+  const startingGuests = initialGuests && initialGuests > 0
+    ? initialGuests
+    : table.guests > 0
+      ? table.guests
+      : 2;
+  const [guestCount, setGuestCount] = useState<number>(startingGuests);
+  const [tableNote, setTableNote] = useState<string>(initialNote ?? '');
   const [zones, setZones] = useState<ZoneData[]>(zonesProp ?? []);
 
   useEffect(() => {
@@ -55,6 +66,7 @@ export default function GuestInfoModal({ table, onClose, onConfirm, zones: zones
           <div>
             <h2 className="text-base font-bold text-foreground">Table {table.label}</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
+              {guestName ? `${guestName} · ` : ''}
               {zoneLabel}
               {table.minSpend ? ` · $${table.minSpend} min spend` : ''}
             </p>

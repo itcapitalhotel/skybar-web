@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Link2, Plus, Save, Tag, Trash2, Wifi } from 'lucide-react';
 import { toast } from 'sonner';
 import { kitchenPrintersApi, menuCategoryApi } from '@/lib/api/client';
+import { useAuthRole } from '@/hooks/useAuthUser';
 import type { CategoryKitchenPrinter, KitchenPrinter, MenuCategory } from '@/lib/api/types';
 import { validatePrinterEndpoint } from '@/lib/printerValidate';
 import {
@@ -52,6 +53,7 @@ function rowsToPayload(rows: PrinterRow[]): CategoryKitchenPrinter[] {
 }
 
 export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }) {
+  const canDelete = useAuthRole() === 'Admin';
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [pickerStations, setPickerStations] = useState<KitchenPrinter[]>([]);
@@ -422,14 +424,16 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
                           className="w-full bg-background border border-border rounded-lg px-2 py-2 text-sm font-mono"
                         />
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => removeRow(categoryId, row.rowKey)}
-                        className="p-2 rounded-lg text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 mb-0.5"
-                        title="Remove row"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {canDelete && (
+                        <button
+                          type="button"
+                          onClick={() => removeRow(categoryId, row.rowKey)}
+                          className="p-2 rounded-lg text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 mb-0.5"
+                          title="Remove row"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <button

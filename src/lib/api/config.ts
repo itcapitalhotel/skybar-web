@@ -8,7 +8,7 @@ const DEFAULT_API = 'http://127.0.0.1:8080/api';
 /** Resolve API base URL at call time. */
 export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
-    // Same-origin proxy: http://172.19.13.248:4028/api/... → Next → http://127.0.0.1:8080/api/...
+    // Same-origin proxy: http://172.20.15.99:4028/api/... → Next → API_PROXY_TARGET/api/...
     return `${window.location.origin}/api`;
   }
   // SSR / server-side: talk to backend directly on the Mac

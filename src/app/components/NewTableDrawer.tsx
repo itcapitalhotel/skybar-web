@@ -13,6 +13,8 @@ interface NewTableDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   onTableAdded?: () => void;
+  /** Floor currently on screen. New tables are created here, not in the first zone. */
+  defaultZoneId?: string | null;
 }
 
 interface TableFormData {
@@ -23,44 +25,64 @@ interface TableFormData {
   shape: FloorTableShape;
 }
 
-export default function NewTableDrawer({ isOpen, onClose, onTableAdded }: NewTableDrawerProps) {
+export default function NewTableDrawer({ isOpen, onClose, onTableAdded, defaultZoneId }: NewTableDrawerProps) {
   const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<TableFormData>({
-    defaultValues: { zone: 'bar', shape: 'rect', capacity: 4 },
+    defaultValues: { zone: '', shape: 'rect', capacity: 4 },
   });
   const [loading, setLoading] = useState(false);
   const [zones, setZones] = useState<{ id: string; label: string }[]>([]);
   const selectedShape = watch('shape');
+  const zoneId = watch('zone');
+  // The native <select> jumps to the first option while the list is loading and
+  // would otherwise save Lounge tables into Moon Area.
+  const resolvedZoneId = zones.some((z) => z.id === zoneId)
+    ? zoneId
+    : (zones.find((z) => z.id === defaultZoneId)?.id ?? zones[0]?.id ?? '');
 
   React.useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
     zonesApi.list()
       .then((list) => {
-        const active = list.filter((z) => z.isActive).map((z) => ({ id: z.id, label: z.label }));
-        setZones(active);
-        if (active[0]) setValue('zone', active[0].id);
+        if (cancelled) return;
+        setZones(list.filter((z) => z.isActive).map((z) => ({ id: z.id, label: z.label })));
       })
-      .catch(() => setZones([]));
-  }, [isOpen, setValue]);
+      .catch(() => { if (!cancelled) setZones([]); });
+    return () => { cancelled = true; };
+  }, [isOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen || !resolvedZoneId || resolvedZoneId === zoneId) return;
+    setValue('zone', resolvedZoneId, { shouldValidate: true });
+  }, [isOpen, resolvedZoneId, zoneId, setValue]);
 
   const onSubmit = async (data: TableFormData) => {
     setLoading(true);
     try {
+      const zone = zones.some((z) => z.id === data.zone) ? data.zone : resolvedZoneId;
+      if (!zone) {
+        toast.error('Choose a zone first.');
+        return;
+      }
       await tablesApi.create({
         label: data.tableNumber,
-        zone: data.zone,
+        zone,
         capacity: Number(data.capacity),
         shape: data.shape as TableShape,
         x: 60,
         y: 80,
         minSpend: data.minSpend ? Number(data.minSpend) : undefined,
       });
-      const zoneName = zones.find((z) => z.id === data.zone)?.label || data.zone;
+      const zoneName = zones.find((z) => z.id === zone)?.label || zone;
       toast.success(`Table ${data.tableNumber} added to ${zoneName}`);
       reset();
       onClose();
       onTableAdded?.();
-    } catch {
-      toast.error('Failed to add table. Please try again.');
+    } catch (err) {
+      const message = err instanceof Error && err.message
+        ? err.message
+        : 'Failed to add table. Please try again.';
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -107,7 +129,8 @@ export default function NewTableDrawer({ isOpen, onClose, onTableAdded }: NewTab
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1.5">Zone</label>
               <select
-                {...register('zone', { required: true })}
+                value={resolvedZoneId}
+                onChange={(e) => setValue('zone', e.target.value, { shouldValidate: true })}
                 className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-foreground text-sm focus:outline-none focus:border-primary transition-colors"
               >
                 {zones.map((z) => (
@@ -116,6 +139,7 @@ export default function NewTableDrawer({ isOpen, onClose, onTableAdded }: NewTab
                   </option>
                 ))}
               </select>
+              {errors.zone && <p className="text-xs text-rose-400 mt-1">{errors.zone.message}</p>}
             </div>
 
             <div>

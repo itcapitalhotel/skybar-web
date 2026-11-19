@@ -1,16 +1,27 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import TopNav from '@/components/TopNav';
 import LockModal from '@/components/LockModal';
 import { useBookingReminder } from '@/components/BookingReminderToast';
 import { formatArrivalTime } from '@/lib/bookingReminders';
 import { CalendarDays, Plus, Phone, User, FileText, X, CheckCircle, MapPin, Search, Trash2, Edit3, Users, Bell, BellOff, Clock } from 'lucide-react';
 import { bookingsApi, tablesApi, zonesApi } from '@/lib/api/client';
-import type { Booking, CreateBookingRequest, UpdateBookingRequest, TableData, ZoneData } from '@/lib/api/types';
+import type { Booking, BookingStatus, CreateBookingRequest, UpdateBookingRequest, TableData, ZoneData } from '@/lib/api/types';
 import { localDateString, tableHasUpcomingBooking } from '@/lib/bookingTableStatus';
+import { findZone } from '@/lib/zoneResolve';
+import { useAuthRole } from '@/hooks/useAuthUser';
 
 const INITIAL_BOOKINGS: Booking[] = [];
+
+function formatDayLabel(iso: string, today: string) {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return iso;
+  const dt = new Date(y, m - 1, d);
+  const pretty = dt.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  return iso === today ? `Today · ${pretty}` : pretty;
+}
 
 const EMPTY_FORM = {
   tableId: '',
@@ -22,9 +33,19 @@ const EMPTY_FORM = {
   time: '20:00',
   zonePreference: 'any',
   reminderEnabled: true,
+  status: 'upcoming' as BookingStatus,
+};
+
+const STATUS_LABEL: Record<BookingStatus, string> = {
+  upcoming: 'Upcoming',
+  seated: 'Seated',
+  cancelled: 'Cancelled',
 };
 
 export default function TableBookingsPage() {
+  const router = useRouter();
+  const role = useAuthRole();
+  const canDelete = role === 'Admin';
   const { fireBookingReminder } = useBookingReminder();
   const [isLocked, setIsLocked] = useState(false);
   const [bookings, setBookings] = useState<Booking[]>(INITIAL_BOOKINGS);
@@ -36,7 +57,8 @@ export default function TableBookingsPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [search, setSearch] = useState('');
   const [filterZone, setFilterZone] = useState<string>('all');
-  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [filterDate, setFilterDate] = useState(localDateString());
+  const [filterStatus, setFilterStatus] = useState<'all' | BookingStatus>('all');
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -61,16 +83,32 @@ export default function TableBookingsPage() {
   const bookableTables = floorTables.filter(t => t.status === 'available' || t.status === 'reserved');
   const getTable = (id: string) => floorTables.find(t => t.id === id);
   const getZone = (zoneId: string) => zones.find(z => z.id === zoneId);
+  const tableZoneId = (table: TableData) => findZone(zones, table.zone)?.id ?? table.zone;
+  const assignZones = form.zonePreference === 'any'
+    ? zones
+    : zones.filter(z => z.id === form.zonePreference);
 
-  const filteredBookings = bookings.filter(b => {
+  const selectZonePreference = (zoneId: string) => {
+    setForm(prev => {
+      const table = floorTables.find(t => t.id === prev.tableId);
+      const stillInZone = !table || zoneId === 'any' || tableZoneId(table) === zoneId;
+      return { ...prev, zonePreference: zoneId, tableId: stillInZone ? prev.tableId : '' };
+    });
+  };
+
+  const bookingDay = (b: Booking) => String(b.date ?? '').slice(0, 10);
+  const onSelectedDate = (b: Booking) => !filterDate || bookingDay(b) === filterDate;
+  const datedBookings = bookings.filter(onSelectedDate);
+
+  const filteredBookings = datedBookings.filter(b => {
     const table = getTable(b.tableId);
     const matchSearch = b.guestName.toLowerCase().includes(search.toLowerCase()) ||
       b.phone.includes(search) ||
-      table?.label.toLowerCase().includes(search.toLowerCase());
+      (table?.label.toLowerCase().includes(search.toLowerCase()) ?? false);
     const matchZone = filterZone === 'all' || table?.zone === filterZone;
     const matchStatus = filterStatus === 'all' || b.status === filterStatus;
     return matchSearch && matchZone && matchStatus;
-  });
+  }).sort((a, b) => bookingDay(a).localeCompare(bookingDay(b)) || a.time.localeCompare(b.time));
 
   const openCreate = () => { setForm(EMPTY_FORM); setEditingId(null); setShowForm(true); };
   const openEdit = (b: Booking) => {
@@ -84,6 +122,7 @@ export default function TableBookingsPage() {
       time: b.time,
       zonePreference: (b as any).zonePreference || 'any',
       reminderEnabled: (b as any).reminderEnabled !== false,
+      status: b.status,
     });
     setEditingId(b.id);
     setShowForm(true);
@@ -118,10 +157,19 @@ export default function TableBookingsPage() {
         time: form.time,
       };
       try {
-        const updated = await bookingsApi.update(editingId, payload);
-        const nextBookings = bookings.map(b => b.id === editingId ? { ...updated, zonePreference: form.zonePreference, reminderEnabled: form.reminderEnabled } as Booking : b);
+        let updated = await bookingsApi.update(editingId, payload);
+        if (previous && form.status !== previous.status) {
+          if (form.status === 'seated') updated = await bookingsApi.seat(editingId);
+          else if (form.status === 'cancelled') updated = await bookingsApi.cancel(editingId);
+          else updated = await bookingsApi.update(editingId, { status: 'upcoming' });
+        }
+        const nextBookings = bookings.map(b => b.id === editingId ? { ...updated, zonePreference: form.zonePreference, reminderEnabled: form.reminderEnabled, status: updated.status || form.status } as Booking : b);
         setBookings(nextBookings);
-        if (form.tableId) await reserveTable(form.tableId);
+        if (form.status === 'cancelled') {
+          if (previous?.status === 'upcoming' && form.tableId) await releaseTable(form.tableId, nextBookings);
+        } else if (form.tableId) {
+          await reserveTable(form.tableId);
+        }
         if (previous?.tableId && previous.tableId !== form.tableId) {
           await releaseTable(previous.tableId, nextBookings);
         }
@@ -129,7 +177,7 @@ export default function TableBookingsPage() {
         setBookings(prev => prev.map(b => b.id === editingId ? {
           ...b, tableId: form.tableId, guestName: form.guestName, phone: form.phone,
           notes: form.notes, partySize: parseInt(form.partySize), date: form.date, time: form.time,
-          zonePreference: form.zonePreference, reminderEnabled: form.reminderEnabled,
+          zonePreference: form.zonePreference, reminderEnabled: form.reminderEnabled, status: form.status,
         } : b));
       }
     } else {
@@ -173,22 +221,28 @@ export default function TableBookingsPage() {
 
   const handleSeat = async (id: string) => {
     const booking = bookings.find(b => b.id === id);
+    if (!booking) return;
     try {
       const updated = await bookingsApi.seat(id);
-      const nextBookings = bookings.map(b => b.id === id ? updated : b);
-      setBookings(nextBookings);
-      if (booking) {
-        try {
-          await tablesApi.updateStatus(booking.tableId, {
-            status: 'occupied',
-            guestCount: booking.partySize,
-          });
-          setFloorTables(prev => prev.map(t => t.id === booking.tableId ? { ...t, status: 'occupied', guests: booking.partySize } : t));
-        } catch { /* ignore */ }
-      }
+      setBookings(bookings.map(b => b.id === id ? updated : b));
     } catch {
       setBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'seated' } : b));
     }
+    try {
+      await tablesApi.updateStatus(booking.tableId, {
+        status: 'occupied',
+        guestCount: booking.partySize,
+      });
+      setFloorTables(prev => prev.map(t => t.id === booking.tableId ? { ...t, status: 'occupied', guests: booking.partySize } : t));
+    } catch { /* floor confirms the party when the menu opens */ }
+
+    const params = new URLSearchParams({
+      openTable: booking.tableId,
+      guests: String(Math.max(1, booking.partySize || 1)),
+    });
+    if (booking.guestName?.trim()) params.set('guest', booking.guestName.trim());
+    if (booking.notes?.trim()) params.set('note', booking.notes.trim());
+    router.push(`/?${params.toString()}`);
   };
 
   const handleCancel = async (id: string) => {
@@ -197,7 +251,7 @@ export default function TableBookingsPage() {
       const updated = await bookingsApi.cancel(id);
       const nextBookings = bookings.map(b => b.id === id ? updated : b);
       setBookings(nextBookings);
-      if (booking) await releaseTable(booking.tableId, nextBookings);
+      if (booking?.status === 'upcoming') await releaseTable(booking.tableId, nextBookings);
     } catch {
       setBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'cancelled' } : b));
     }
@@ -225,8 +279,25 @@ export default function TableBookingsPage() {
     cancelled: 'bg-rose-500/15 text-rose-400 border-rose-500/25',
   };
 
-  const upcomingCount = bookings.filter(b => b.status === 'upcoming').length;
-  const seatedCount = bookings.filter(b => b.status === 'seated').length;
+  const upcomingCount = datedBookings.filter(b => b.status === 'upcoming').length;
+  const seatedCount = datedBookings.filter(b => b.status === 'seated').length;
+  const today = localDateString();
+  const dateLabel = !filterDate ? 'all dates' : filterDate === today ? 'today' : filterDate;
+  const dateChoices = (() => {
+    const days = new Set<string>();
+    bookings.forEach((b) => {
+      const day = bookingDay(b);
+      if (day) days.add(day);
+    });
+    for (let offset = -14; offset <= 45; offset += 1) {
+      const dt = new Date();
+      dt.setHours(12, 0, 0, 0);
+      dt.setDate(dt.getDate() + offset);
+      days.add(localDateString(dt));
+    }
+    if (filterDate) days.add(filterDate);
+    return [...days].sort();
+  })();
 
   return (
     <div className="min-h-screen bg-background">
@@ -242,7 +313,7 @@ export default function TableBookingsPage() {
             </div>
             <div>
               <h1 className="text-lg md:text-xl font-semibold text-foreground">Table Bookings</h1>
-              <p className="text-xs md:text-sm text-muted-foreground">{upcomingCount} upcoming · {seatedCount} seated tonight</p>
+              <p className="text-xs md:text-sm text-muted-foreground">{upcomingCount} upcoming · {seatedCount} seated · {dateLabel}</p>
             </div>
           </div>
           <button
@@ -259,7 +330,7 @@ export default function TableBookingsPage() {
           {[
             { label: 'Upcoming', value: upcomingCount, color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20' },
             { label: 'Seated', value: seatedCount, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
-            { label: 'Total Tonight', value: bookings.filter(b => b.status !== 'cancelled').length, color: 'text-cyan-400', bg: 'bg-cyan-500/10 border-cyan-500/20' },
+            { label: 'On this date', value: datedBookings.filter(b => b.status !== 'cancelled').length, color: 'text-cyan-400', bg: 'bg-cyan-500/10 border-cyan-500/20' },
           ].map(s => (
             <div key={s.label} className={`glass-card rounded-xl border p-3 md:p-4 ${s.bg}`}>
               <p className={`text-xl md:text-2xl font-bold ${s.color}`}>{s.value}</p>
@@ -290,13 +361,25 @@ export default function TableBookingsPage() {
           </select>
           <select
             value={filterStatus}
-            onChange={e => setFilterStatus(e.target.value)}
+            onChange={e => setFilterStatus(e.target.value as 'all' | BookingStatus)}
+            aria-label="Booking status"
             className="bg-muted/30 border border-border rounded-lg px-2 md:px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
           >
-            <option value="all">All Status</option>
+            <option value="all">All statuses</option>
             <option value="upcoming">Upcoming</option>
             <option value="seated">Seated</option>
             <option value="cancelled">Cancelled</option>
+          </select>
+          <select
+            value={filterDate}
+            onChange={e => setFilterDate(e.target.value)}
+            aria-label="Booking date"
+            className="bg-muted/30 border border-border rounded-lg px-2 md:px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+          >
+            <option value="">All dates</option>
+            {dateChoices.map((day) => (
+              <option key={day} value={day}>{formatDayLabel(day, today)}</option>
+            ))}
           </select>
         </div>
 
@@ -305,7 +388,15 @@ export default function TableBookingsPage() {
           {filteredBookings.length === 0 ? (
             <div className="glass-card rounded-xl border border-border p-10 md:p-12 text-center">
               <CalendarDays size={32} className="text-muted-foreground mx-auto mb-3 opacity-40" />
-              <p className="text-muted-foreground text-sm">No bookings found</p>
+              <p className="text-muted-foreground text-sm">
+                {filterStatus === 'seated'
+                  ? `No seated bookings${filterDate ? ` on ${dateLabel}` : ''}`
+                  : filterStatus === 'upcoming'
+                    ? `No upcoming bookings${filterDate ? ` on ${dateLabel}` : ''}`
+                    : filterStatus === 'cancelled'
+                      ? `No cancelled bookings${filterDate ? ` on ${dateLabel}` : ''}`
+                      : 'No bookings found'}
+              </p>
             </div>
           ) : (
             filteredBookings.map(booking => {
@@ -318,7 +409,7 @@ export default function TableBookingsPage() {
                     {/* Time */}
                     <div className="flex-shrink-0 w-12 md:w-16 text-center">
                       <p className="text-base md:text-lg font-bold text-foreground">{booking.time}</p>
-                      <p className="text-xs text-muted-foreground">{booking.date.slice(5)}</p>
+                      <p className="text-xs text-muted-foreground">{bookingDay(booking).slice(5) || booking.date}</p>
                     </div>
 
                     {/* Table Badge */}
@@ -337,7 +428,7 @@ export default function TableBookingsPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-semibold text-sm md:text-base text-foreground">{booking.guestName}</p>
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${STATUS_STYLES[booking.status]}`}>
-                          {booking.status.charAt(0).toUpperCase() + booking.status.slice(1)}
+                          {STATUS_LABEL[booking.status] || booking.status}
                         </span>
                         {/* Zone preference badge */}
                         {(booking as any).zonePreference && (booking as any).zonePreference !== 'any' && (
@@ -376,12 +467,6 @@ export default function TableBookingsPage() {
                           >
                             Seat
                           </button>
-                          <button
-                            onClick={() => handleCancel(booking.id)}
-                            className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-medium hover:bg-rose-500/20 transition-all"
-                          >
-                            Cancel
-                          </button>
                           {/* Test reminder button */}
                           <button
                             onClick={() => fireTestReminder(booking)}
@@ -392,13 +477,21 @@ export default function TableBookingsPage() {
                           </button>
                         </>
                       )}
+                      {booking.status !== 'cancelled' && (
+                        <button
+                          onClick={() => handleCancel(booking.id)}
+                          className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-medium hover:bg-rose-500/20 transition-all"
+                        >
+                          Cancel
+                        </button>
+                      )}
                       <button
                         onClick={() => openEdit(booking)}
                         className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
                       >
                         <Edit3 size={14} />
                       </button>
-                      {deleteConfirm === booking.id ? (
+                      {canDelete && (deleteConfirm === booking.id ? (
                         <div className="flex items-center gap-1">
                           <button onClick={() => handleDelete(booking.id)} className="px-2 py-1 rounded text-xs bg-rose-500 text-white font-medium">Confirm</button>
                           <button onClick={() => setDeleteConfirm(null)} className="px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground">No</button>
@@ -407,10 +500,11 @@ export default function TableBookingsPage() {
                         <button
                           onClick={() => setDeleteConfirm(booking.id)}
                           className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition-all"
+                          title="Remove booking"
                         >
                           <Trash2 size={14} />
                         </button>
-                      )}
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -439,7 +533,7 @@ export default function TableBookingsPage() {
                 </label>
                 <div className="grid grid-cols-5 gap-1.5">
                   <button
-                    onClick={() => setForm(p => ({ ...p, zonePreference: 'any' }))}
+                    onClick={() => selectZonePreference('any')}
                     className={`py-2 rounded-lg text-xs font-medium border transition-all ${form.zonePreference === 'any' ? 'bg-primary/15 border-primary/30 text-primary' : 'bg-muted/20 border-border text-muted-foreground hover:text-foreground'}`}
                   >
                     Any
@@ -447,7 +541,7 @@ export default function TableBookingsPage() {
                   {zones.map(z => (
                     <button
                       key={z.id}
-                      onClick={() => setForm(p => ({ ...p, zonePreference: z.id }))}
+                      onClick={() => selectZonePreference(z.id)}
                       className="py-2 rounded-lg text-xs font-medium border transition-all"
                       style={form.zonePreference === z.id
                         ? { background: `${z.color}20`, borderColor: `${z.color}50`, color: z.color }
@@ -470,15 +564,22 @@ export default function TableBookingsPage() {
                   className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
                 >
                   <option value="">Select a table…</option>
-                  {zones.map(zone => (
-                    <optgroup key={zone.id} label={zone.label}>
-                      {floorTables.filter(t => t.zone === zone.id && (t.status === 'available' || t.status === 'reserved' || t.id === form.tableId)).map(t => (
-                        <option key={t.id} value={t.id}>
-                          Table {t.label} — Cap. {t.capacity} ({t.status})
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
+                  {assignZones.map(zone => {
+                    const tables = floorTables.filter(t =>
+                      tableZoneId(t) === zone.id &&
+                      (t.status === 'available' || t.status === 'reserved' || t.id === form.tableId),
+                    );
+                    if (tables.length === 0) return null;
+                    return (
+                      <optgroup key={zone.id} label={zone.label}>
+                        {tables.map(t => (
+                          <option key={t.id} value={t.id}>
+                            Table {t.label} — Cap. {t.capacity} ({t.status})
+                          </option>
+                        ))}
+                      </optgroup>
+                    );
+                  })}
                 </select>
               </div>
 
@@ -543,6 +644,21 @@ export default function TableBookingsPage() {
                   />
                 </div>
               </div>
+
+              {editingId && (
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5 uppercase tracking-wider">Status</label>
+                  <select
+                    value={form.status}
+                    onChange={e => setForm(p => ({ ...p, status: e.target.value as BookingStatus }))}
+                    className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                  >
+                    <option value="upcoming">Upcoming</option>
+                    <option value="seated">Seated</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </div>
+              )}
 
               {/* Notes */}
               <div>

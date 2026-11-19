@@ -5,6 +5,7 @@ import TopNav from '@/components/TopNav';
 import LockModal from '@/components/LockModal';
 import { CalendarRange, Plus, ChevronLeft, ChevronRight, Clock, MapPin, Edit3, Trash2, X, CheckCircle, Users, ToggleLeft, ToggleRight, Search } from 'lucide-react';
 import { zonesApi, rosterApi } from '@/lib/api/client';
+import { useAuthRole } from '@/hooks/useAuthUser';
 import type {
   AvailabilityStatus,
   ShiftType,
@@ -60,6 +61,7 @@ function fmtDisplay(d: Date) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function WeeklyRosterPage() {
+  const canDelete = useAuthRole() === 'Admin';
   const [isLocked, setIsLocked] = useState(false);
   const [shifts, setShifts] = useState<StaffShift[]>([]);
   const [availability, setAvailability] = useState<StaffAvailability[]>([]);
@@ -360,7 +362,7 @@ export default function WeeklyRosterPage() {
                                             >
                                               <Edit3 size={9} />
                                             </button>
-                                            {deleteConfirm === shift.id ? (
+                                            {canDelete && (deleteConfirm === shift.id ? (
                                               <>
                                                 <button onClick={e => { e.stopPropagation(); handleDelete(shift.id); }} className="px-1 py-0.5 rounded bg-rose-500 text-white text-[9px]">Del</button>
                                                 <button onClick={e => { e.stopPropagation(); setDeleteConfirm(null); }} className="px-1 py-0.5 rounded text-muted-foreground text-[9px]">No</button>
@@ -372,7 +374,7 @@ export default function WeeklyRosterPage() {
                                               >
                                                 <Trash2 size={9} />
                                               </button>
-                                            )}
+                                            ))}
                                           </div>
                                         </div>
                                         <div className="flex items-center gap-1 mt-0.5">

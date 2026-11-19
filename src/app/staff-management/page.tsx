@@ -6,9 +6,8 @@ import {
   ArrowLeft, Plus, Search, Shield, Edit2, Trash2, X, CheckCircle2,
   KeyRound, Users, UserCheck, UserX, Clock
 } from 'lucide-react';
-import OnScreenField from '@/components/OnScreenField';
-import PinPad from '@/components/PinPad';
 import { staffApi, usersApi } from '@/lib/api/client';
+import { useAuthRole } from '@/hooks/useAuthUser';
 import type { StaffUser, UserRole, CreateUserRequest, UpdateUserRequest } from '@/lib/api/types';
 
 const ROLE_CONFIG: Record<UserRole, { color: string; bg: string; border: string; icon: string; label: string }> = {
@@ -43,23 +42,23 @@ function isValidPin(pin: string): boolean {
   return /^\d{4,6}$/.test(pin);
 }
 
-function PinDots({ value, max = 4 }: { value: string; max?: number }) {
-  return (
-    <div className="flex items-center gap-2">
-      {Array.from({ length: max }).map((_, i) => (
-        <div
-          key={i}
-          className={`w-3 h-3 rounded-full border-2 transition-all duration-200 ${
-            i < value.length
-              ? 'bg-amber-400 border-amber-400 scale-110' :'bg-transparent border-slate-600'
-          }`}
-        />
-      ))}
-    </div>
-  );
+const fieldClass = 'w-full px-3 py-3 rounded-xl text-base bg-muted/20 border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-500/50';
+
+function formatLastActive(value?: string) {
+  if (!value || value === '—') return '—';
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return value;
+  return dt.toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 export default function StaffManagementPage() {
+  const canDelete = useAuthRole() === 'Admin';
   const [staff, setStaff] = useState<StaffUser[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -126,8 +125,6 @@ export default function StaffManagementPage() {
     setPinError('');
     setDrawerOpen(true);
   };
-
-  const pinField: 'pin' | 'confirmPin' = form.pin.length < 4 ? 'pin' : 'confirmPin';
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.email.trim()) {
@@ -343,7 +340,7 @@ export default function StaffManagementPage() {
                   <div className="grid grid-cols-2 gap-2">
                     <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.12)' }}>
                       <p className="text-[10px] text-muted-foreground">Last Active</p>
-                      <p className="text-xs font-medium text-foreground">{user.lastActive}</p>
+                      <p className="text-xs font-medium text-foreground leading-snug">{formatLastActive(user.lastActive)}</p>
                     </div>
                     <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.12)' }}>
                       <p className="text-[10px] text-muted-foreground">Shifts / Week</p>
@@ -366,12 +363,15 @@ export default function StaffManagementPage() {
                     >
                       <KeyRound size={12} /> {user.hasPin ? 'Reset PIN' : 'Set PIN'}
                     </button>
-                    <button
-                      onClick={() => setDeleteConfirm(user.id)}
-                      className="flex items-center justify-center p-2 rounded-xl text-xs font-medium transition-all bg-rose-500/10 border border-rose-500/25 text-rose-400 hover:bg-rose-500/20"
-                    >
-                      <Trash2 size={12} />
-                    </button>
+                    {canDelete && (
+                      <button
+                        onClick={() => setDeleteConfirm(user.id)}
+                        className="flex items-center justify-center p-2 rounded-xl text-xs font-medium transition-all bg-rose-500/10 border border-rose-500/25 text-rose-400 hover:bg-rose-500/20"
+                        title="Remove staff"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -381,7 +381,7 @@ export default function StaffManagementPage() {
       </div>
 
       {/* Delete Confirm */}
-      {deleteConfirm && (
+      {canDelete && deleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
           <div className="rounded-2xl p-6 w-full max-w-sm" style={{ background: 'rgba(15,23,42,0.98)', border: '1px solid rgba(239,68,68,0.3)' }}>
             <h3 className="text-base font-bold text-foreground mb-2">Remove Staff Member?</h3>
@@ -430,23 +430,30 @@ export default function StaffManagementPage() {
             <div className="flex-1 px-5 py-4 pb-28 space-y-4 overflow-y-auto">
               {pinStep === 'account' ? (
                 <>
-                  <OnScreenField
-                    label="Full Name"
-                    required
-                    value={form.name}
-                    onChange={(name) => setForm((p) => ({ ...p, name }))}
-                    placeholder="e.g. Jordan Lee"
-                    mode="text"
-                  />
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1.5">Full Name *</label>
+                    <input
+                      type="text"
+                      value={form.name}
+                      onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+                      placeholder="e.g. Jordan Lee"
+                      autoComplete="name"
+                      className={fieldClass}
+                    />
+                  </div>
 
-                  <OnScreenField
-                    label="Email Address"
-                    required
-                    value={form.email}
-                    onChange={(email) => setForm((p) => ({ ...p, email }))}
-                    placeholder="staff@skybar.com"
-                    mode="email"
-                  />
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1.5">Email Address *</label>
+                    <input
+                      type="email"
+                      value={form.email}
+                      onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
+                      placeholder="staff@skybar.com"
+                      autoComplete="email"
+                      inputMode="email"
+                      className={fieldClass}
+                    />
+                  </div>
 
                   <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1.5">Role *</label>
@@ -472,17 +479,17 @@ export default function StaffManagementPage() {
                     </div>
                   </div>
 
-                  <OnScreenField
-                    label="Terminal ID (optional)"
-                    value={form.terminalId}
-                    onChange={(terminalId) => setForm((p) => ({ ...p, terminalId }))}
-                    placeholder="e.g. POS-05"
-                    mode="text"
-                  />
-
-                  <p className="text-[11px] text-muted-foreground rounded-xl px-3 py-2 bg-muted/15 border border-border/50">
-                    Fields use the app&apos;s built-in keyboard (works on iPad without a plugged-in keyboard). Next step sets the login PIN.
-                  </p>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1.5">Terminal ID (optional)</label>
+                    <input
+                      type="text"
+                      value={form.terminalId}
+                      onChange={(e) => setForm((p) => ({ ...p, terminalId: e.target.value }))}
+                      placeholder="e.g. POS-05"
+                      autoComplete="off"
+                      className={fieldClass}
+                    />
+                  </div>
 
                   <button
                     type="button"
@@ -506,38 +513,42 @@ export default function StaffManagementPage() {
                       </p>
                     </div>
 
-                    <div className="space-y-4">
+                    <div className="space-y-4 text-left">
                       <div>
-                        <p className={`text-xs mb-2 ${pinField === 'pin' ? 'text-amber-400 font-medium' : 'text-muted-foreground'}`}>
-                          Enter PIN
-                        </p>
-                        <div className="flex justify-center">
-                          <PinDots value={form.pin} />
-                        </div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1.5">Enter PIN</label>
+                        <input
+                          type="password"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          maxLength={6}
+                          value={form.pin}
+                          onChange={(e) => {
+                            setPinError('');
+                            const pin = e.target.value.replace(/\D/g, '').slice(0, 6);
+                            setForm((prev) => ({ ...prev, pin, confirmPin: pin.length < 4 ? '' : prev.confirmPin }));
+                          }}
+                          placeholder="4–6 digits"
+                          className={fieldClass}
+                        />
                       </div>
                       <div>
-                        <p className={`text-xs mb-2 ${pinField === 'confirmPin' ? 'text-amber-400 font-medium' : 'text-muted-foreground'}`}>
-                          Confirm PIN
-                        </p>
-                        <div className="flex justify-center">
-                          <PinDots value={form.confirmPin} />
-                        </div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1.5">Confirm PIN</label>
+                        <input
+                          type="password"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          maxLength={6}
+                          value={form.confirmPin}
+                          onChange={(e) => {
+                            setPinError('');
+                            const confirmPin = e.target.value.replace(/\D/g, '').slice(0, 6);
+                            setForm((prev) => ({ ...prev, confirmPin }));
+                          }}
+                          placeholder="Repeat the PIN"
+                          className={fieldClass}
+                        />
                       </div>
                       {pinError && <p className="text-xs text-rose-400 text-center">{pinError}</p>}
-                    </div>
-
-                    <div className="max-w-[260px] mx-auto">
-                      <PinPad
-                        value={form[pinField]}
-                        onChange={(next) => {
-                          setPinError('');
-                          if (pinField === 'pin') {
-                            setForm((prev) => ({ ...prev, pin: next, confirmPin: next.length < 4 ? '' : prev.confirmPin }));
-                          } else {
-                            setForm((prev) => ({ ...prev, confirmPin: next }));
-                          }
-                        }}
-                      />
                     </div>
 
                     <button

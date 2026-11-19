@@ -363,7 +363,7 @@ export default function MenuOverlay({
                             </span>
                           ) : null}
                         </div>
-                        <p className="text-sm font-medium text-foreground leading-snug line-clamp-2">{item.name}</p>
+                        <p className="text-sm font-medium text-foreground leading-snug break-words">{item.name}</p>
                         {!multiSize && item.sizes?.[0]?.label ? (
                           <p className="text-[10px] text-muted-foreground mt-0.5">{item.sizes[0].label}</p>
                         ) : null}
@@ -434,7 +434,7 @@ export default function MenuOverlay({
                       >
                         <div className="flex items-start gap-2">
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold text-foreground leading-snug">
+                            <p className="text-xs font-semibold text-foreground leading-snug break-words">
                               {entry.menuItem.name}
                             </p>
                             {sizeLabel ? (

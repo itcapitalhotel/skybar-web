@@ -34,7 +34,10 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${dmSans.variable} dark`}>
-      <body className={`${dmSans.className} bg-background text-foreground antialiased`}>
+      <body
+        className={`${dmSans.className} bg-background text-foreground antialiased`}
+        suppressHydrationWarning
+      >
         <OrderNotificationProvider>
           <BookingReminderProvider>
             <AuthGuard>{children}</AuthGuard>

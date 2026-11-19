@@ -5,6 +5,7 @@ import TopNav from '@/components/TopNav';
 import LockModal from '@/components/LockModal';
 import { Bell, CheckCircle2, CalendarClock, Info, Package, ShoppingBag, Clock, Trash2, CheckCheck, Filter, X } from 'lucide-react';
 import { notificationsApi } from '@/lib/api/client';
+import { useAuthRole } from '@/hooks/useAuthUser';
 import type { AppNotification, NotificationType, NotificationPriority } from '@/lib/api/types';
 
 
@@ -67,6 +68,7 @@ function normalizeNotification(raw: AppNotification): AppNotification {
 }
 
 export default function NotificationsPage() {
+  const canDelete = useAuthRole() === 'Admin';
   const [lockOpen, setLockOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -159,13 +161,15 @@ export default function NotificationsPage() {
                 Mark all read
               </button>
             )}
-            <button
-              onClick={clearAll}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-muted/50 border border-border text-xs text-muted-foreground hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 transition-all"
-            >
-              <Trash2 size={13} />
-              Clear read
-            </button>
+            {canDelete && (
+              <button
+                onClick={clearAll}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-muted/50 border border-border text-xs text-muted-foreground hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 transition-all"
+              >
+                <Trash2 size={13} />
+                Clear read
+              </button>
+            )}
           </div>
         </div>
 
@@ -264,12 +268,15 @@ export default function NotificationsPage() {
                             <Clock size={10} />
                             {n.timestamp}
                           </span>
-                          <button
-                            onClick={e => { e.stopPropagation(); dismiss(n.id); }}
-                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-muted-foreground hover:text-rose-400 transition-all"
-                          >
-                            <X size={13} />
-                          </button>
+                          {canDelete && (
+                            <button
+                              onClick={e => { e.stopPropagation(); dismiss(n.id); }}
+                              className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-muted-foreground hover:text-rose-400 transition-all"
+                              title="Remove notification"
+                            >
+                              <X size={13} />
+                            </button>
+                          )}
                         </div>
                       </div>
                       <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{n.message}</p>

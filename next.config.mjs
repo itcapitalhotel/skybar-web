@@ -6,19 +6,25 @@ import { imageHosts } from './image-hosts.config.mjs';
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const apiProxyTarget = process.env.API_PROXY_TARGET || 'http://127.0.0.1:8080';
 
+function hostOnly(value) {
+  return String(value).trim().replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+}
+
 function getLanDevOrigins() {
-  const origins = ['localhost:4028', '127.0.0.1:4028'];
+  // Next compares the Origin hostname only (no port), so 172.20.15.99:4028
+  // must be listed as 172.20.15.99 or /_next assets are blocked.
+  const origins = ['127.0.0.1', '172.20.15.99'];
   const envOrigin = process.env.DEV_LAN_ORIGIN;
-  if (envOrigin) origins.push(envOrigin);
+  if (envOrigin) origins.push(hostOnly(envOrigin));
 
   for (const nets of Object.values(networkInterfaces())) {
     for (const net of nets ?? []) {
       if (net.family === 'IPv4' && !net.internal) {
-        origins.push(`${net.address}:4028`);
+        origins.push(net.address);
       }
     }
   }
-  return [...new Set(origins)];
+  return [...new Set(origins.filter(Boolean))];
 }
 
 const isProd = process.env.NODE_ENV === 'production';

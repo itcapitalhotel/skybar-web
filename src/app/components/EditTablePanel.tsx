@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Trash2, Save, AlertCircle } from 'lucide-react';
 import type { TableData, TableShape } from './floorData';
+import { useAuthRole } from '@/hooks/useAuthUser';
 import TableShapePicker from './TableShapePicker';
 
 interface EditTablePanelProps {
@@ -32,6 +33,7 @@ export default function EditTablePanel({
   const [label, setLabel] = useState('');
   const [shape, setShape] = useState<TableShape>('rect');
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const isAdmin = useAuthRole() === 'Admin';
 
   useEffect(() => {
     setLabel(table?.label ?? '');
@@ -104,6 +106,7 @@ export default function EditTablePanel({
         />
       </div>
 
+      {isAdmin && (
       <div className="pt-2 border-t border-border">
         {!canDelete && (
           <p className="text-[10px] text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 flex gap-2 mb-3">
@@ -147,6 +150,7 @@ export default function EditTablePanel({
           </div>
         )}
       </div>
+      )}
 
       <p className="text-[10px] text-muted-foreground font-mono break-all">ID: {table.id}</p>
     </div>

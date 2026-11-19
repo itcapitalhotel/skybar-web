@@ -7,6 +7,7 @@ import ManagerPinModal from '@/components/ManagerPinModal';
 import { Settings, Percent, Printer, BookOpen, Save, RotateCcw, CheckCircle, ChevronRight, Wifi, Globe, FileText, Plus, Trash2, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { configApi, zonesApi } from '@/lib/api/client';
+import { useAuthRole } from '@/hooks/useAuthUser';
 import type { VenueConfig, ZoneData, ZonePrinter } from '@/lib/api/types';
 import { validatePrinterEndpoint } from '@/lib/printerValidate';
 import {
@@ -79,6 +80,7 @@ function newDraftZonePrinter(zoneId: string, index: number, isDefault: boolean):
 type ActiveSection = 'charges' | 'currency' | 'printer' | 'categoryPrinter' | 'rules' | 'receipt';
 
 export default function AdminConfigPage() {
+  const canDelete = useAuthRole() === 'Admin';
   const [isLocked, setIsLocked] = useState(false);
   const [showManagerPin, setShowManagerPin] = useState(false);
   const [config, setConfig] = useState<ConfigState>(DEFAULT_CONFIG);
@@ -753,14 +755,16 @@ export default function AdminConfigPage() {
                                         </span>
                                       )}
                                     </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => removePrinterFromZone(zp.zoneId, printer.id)}
-                                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition-all"
-                                    >
-                                      <Trash2 size={11} />
-                                      Remove
-                                    </button>
+                                    {canDelete && (
+                                      <button
+                                        type="button"
+                                        onClick={() => removePrinterFromZone(zp.zoneId, printer.id)}
+                                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition-all"
+                                      >
+                                        <Trash2 size={11} />
+                                        Remove
+                                      </button>
+                                    )}
                                   </div>
 
                                   <div className="space-y-2">

@@ -25,17 +25,40 @@ export function tableHasUpcomingBooking(
   );
 }
 
-/** Show booked tables as reserved when the API table is still `available`. */
+function reservedViewMatches<T extends { id: string; status: TableStatus }>(prev: T, source: T): boolean {
+  if (prev.status !== 'reserved' || prev.id !== source.id) return false;
+  const fields = ['label', 'zone', 'guests', 'capacity', 'staff', 'seatedMinutes', 'minSpend', 'orderTotal', 'shape', 'x', 'y'] as const;
+  return fields.every((key) => (prev as Record<string, unknown>)[key] === (source as Record<string, unknown>)[key]);
+}
+
+/**
+ * Show booked tables as reserved when the API table is still `available`.
+ * `cache` keeps the same reserved object across refreshes so unchanged tables
+ * are not redrawn.
+ */
 export function applyBookingStatus<T extends { id: string; status: TableStatus }>(
   tables: T[],
   bookings: Booking[],
   forDate = localDateString(),
+  cache?: Map<string, T>,
 ): T[] {
   const reservedIds = getReservedTableIds(bookings, forDate);
-  return tables.map((t) => {
+  const next = tables.map((t) => {
     if (t.status === 'available' && reservedIds.has(t.id)) {
-      return { ...t, status: 'reserved' as const };
+      const prev = cache?.get(t.id);
+      if (prev && reservedViewMatches(prev, t)) return prev;
+      const view = { ...t, status: 'reserved' as const };
+      cache?.set(t.id, view);
+      return view;
     }
+    if (cache?.has(t.id)) cache.delete(t.id);
     return t;
   });
+  if (cache) {
+    for (const id of [...cache.keys()]) {
+      if (!reservedIds.has(id)) cache.delete(id);
+    }
+  }
+  if (next.every((row, index) => row === tables[index])) return tables;
+  return next;
 }

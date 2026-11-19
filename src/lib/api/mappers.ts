@@ -23,15 +23,57 @@ export function mapMenuItems(items: ApiMenuItem[]): MenuItem[] {
 }
 
 export function zoneToMeta(zone: ZoneData): ZoneMeta {
+  const color = zone.color || '#06b6d4';
   return {
     id: zone.id,
     label: zone.label,
-    color: zone.color,
-    accentColor: `${zone.color}14`,
+    color,
+    accentColor: `${color}14`,
     description: zone.description,
-    canvasWidth: zone.canvasWidth,
-    canvasHeight: zone.canvasHeight,
+    canvasWidth: zone.canvasWidth || 1200,
+    canvasHeight: zone.canvasHeight || 800,
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** Map one GET/POST /zones payload (camelCase or snake_case). */
+export function normalizeZone(raw: unknown): ZoneData | null {
+  const z = asRecord(raw);
+  if (!z) return null;
+  const id = String(z.id ?? z.zoneId ?? z.zone_id ?? '').trim();
+  if (!id) return null;
+  const active = z.isActive ?? z.active ?? z.is_active;
+  return {
+    id,
+    label: String(z.label ?? z.name ?? id),
+    description: String(z.description ?? ''),
+    color: String(z.color ?? '#06b6d4'),
+    tableCount: Number(z.tableCount ?? z.table_count ?? 0) || 0,
+    capacity: Number(z.capacity ?? 0) || 0,
+    isActive: active !== false && active !== 'false' && active !== 0,
+    canvasWidth: Number(z.canvasWidth ?? z.canvas_width ?? 1200) || 1200,
+    canvasHeight: Number(z.canvasHeight ?? z.canvas_height ?? 800) || 800,
+  };
+}
+
+/** Unwrap list/page wrappers from GET /zones. */
+export function normalizeZoneList(raw: unknown): ZoneData[] {
+  if (Array.isArray(raw)) {
+    return raw.map(normalizeZone).filter((z): z is ZoneData => z != null);
+  }
+  const o = asRecord(raw);
+  if (!o) return [];
+  const nested = o.content ?? o.data ?? o.zones ?? o.items ?? o.results;
+  if (Array.isArray(nested)) {
+    return nested.map(normalizeZone).filter((z): z is ZoneData => z != null);
+  }
+  const single = normalizeZone(raw);
+  return single ? [single] : [];
 }
 
 export function normalizeNotification<T extends { createdAt?: string; timestamp?: string }>(n: T): T & { timestamp: string } {

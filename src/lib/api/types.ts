@@ -76,6 +76,7 @@ export interface ZonePrinter {
   printerIp: string;
   printerPort: number;
   isDefault: boolean;
+  kind?: 'receipt' | 'kitchen' | string;
 }
 
 /** Kitchen station catalog (picker) — not the per-category editor list. */
@@ -117,6 +118,12 @@ export interface CreateZonePrinterRequest {
   printerIp: string;
   printerPort: number;
   isDefault?: boolean;
+}
+
+export interface CreateZoneKitchenPrinterRequest {
+  name: string;
+  printerIp: string;
+  printerPort: number;
 }
 
 export interface UpdateZonePrinterRequest {

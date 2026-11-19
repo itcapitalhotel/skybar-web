@@ -1,27 +1,29 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import TopNav from '@/components/TopNav';
 import { useAuthRole } from '@/hooks/useAuthUser';
-import LockModal from '@/components/LockModal';
-import ManagerPinModal from '@/components/ManagerPinModal';
-import PaymentModal from '@/components/PaymentModal';
-import SplitBillModal from '@/components/SplitBillModal';
-import TransferTableModal from '@/components/TransferTableModal';
-import NewTableDrawer from './NewTableDrawer';
 import EditTablePanel from './EditTablePanel';
 import FloorCanvas from './FloorCanvas';
 import OrderPanel from './OrderPanel';
-import MenuOverlay from './MenuOverlay';
-import GuestInfoModal from './GuestInfoModal';
-import { TableData, OrderItem, TableShape } from './floorData';
-import { tablesApi, ordersApi, zonesApi, bookingsApi } from '@/lib/api/client';
+
+const LockModal = dynamic(() => import('@/components/LockModal'));
+const ManagerPinModal = dynamic(() => import('@/components/ManagerPinModal'));
+const PaymentModal = dynamic(() => import('@/components/PaymentModal'));
+const SplitBillModal = dynamic(() => import('@/components/SplitBillModal'));
+const TransferTableModal = dynamic(() => import('@/components/TransferTableModal'));
+const NewTableDrawer = dynamic(() => import('./NewTableDrawer'));
+const MenuOverlay = dynamic(() => import('./MenuOverlay'));
+const GuestInfoModal = dynamic(() => import('./GuestInfoModal'));
+import { TableData, OrderItem, TableShape, ZoneMeta } from './floorData';
+import { tablesApi, ordersApi, zonesApi, bookingsApi, menuApi } from '@/lib/api/client';
 import { getWsBaseUrl } from '@/lib/api/config';
 import type { TableData as ApiTableData, ZoneData, Booking } from '@/lib/api/types';
 import { applyBookingStatus, localDateString } from '@/lib/bookingTableStatus';
 import { getStaffIdForOrder } from '@/lib/staffDisplay';
 import { findZone } from '@/lib/zoneResolve';
-import { LayoutGrid, Plus, PenLine, Map, Users, Layers, RefreshCw } from 'lucide-react';
+import { LayoutGrid, Plus, PenLine, Map as MapIcon, Users, Layers, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 
@@ -37,6 +39,49 @@ const STATUS_LEGEND = [
   { color: 'bg-amber-500', label: 'Reserved', glow: '' },
   { color: 'bg-cyan-500', label: 'Bill Ready', glow: '' },
 ];
+
+function toZoneMeta(z: ZoneData): ZoneMeta {
+  const color = z.color?.trim() || '#06b6d4';
+  return {
+    id: z.id,
+    label: z.label,
+    color,
+    accentColor: /^#[0-9a-fA-F]{6}$/.test(color) ? `${color}18` : 'rgba(15,23,42,0.6)',
+    description: z.description ?? '',
+    canvasWidth: z.canvasWidth || 1200,
+    canvasHeight: z.canvasHeight || 700,
+  };
+}
+
+function sameTableRecord(a: TableData, b: TableData): boolean {
+  return a.id === b.id
+    && a.label === b.label
+    && a.zone === b.zone
+    && a.status === b.status
+    && a.guests === b.guests
+    && a.capacity === b.capacity
+    && a.staff === b.staff
+    && a.seatedMinutes === b.seatedMinutes
+    && a.minSpend === b.minSpend
+    && a.orderTotal === b.orderTotal
+    && a.shape === b.shape
+    && a.x === b.x
+    && a.y === b.y;
+}
+
+/** Keep the previous object when a table did not change, so React can skip that node. */
+function shareTableList(prev: TableData[], next: TableData[]): TableData[] {
+  if (prev.length === next.length && prev.every((row, index) => sameTableRecord(row, next[index]))) {
+    return prev;
+  }
+  const prevById = new Map(prev.map((row) => [row.id, row]));
+  const merged = next.map((row) => {
+    const old = prevById.get(row.id);
+    return old && sameTableRecord(old, row) ? old : row;
+  });
+  if (merged.length === prev.length && merged.every((row, index) => row === prev[index])) return prev;
+  return merged;
+}
 
 /** Convert API table to local TableData — resolve zone to canonical GET /zones id when possible */
 function apiTableToLocal(t: ApiTableData, zones: ZoneData[] = []): TableData {
@@ -64,6 +109,7 @@ export default function FloorMapClient() {
   const [lockOpen, setLockOpen] = useState(false);
   const [locked, setLocked] = useState(false);
   const [zoneFilter, setZoneFilter] = useState<ZoneFilter>('all');
+  const [visibleZoneId, setVisibleZoneId] = useState<string | null>(null);
   const [zoneTabs, setZoneTabs] = useState(DEFAULT_ZONE_TABS);
   const [zoneCatalog, setZoneCatalog] = useState<ZoneData[]>([]);
   const [selectedTable, setSelectedTable] = useState<TableData | null>(null);
@@ -86,6 +132,9 @@ export default function FloorMapClient() {
   const [savedPositions, setSavedPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [menuShowAll, setMenuShowAll] = useState(false);
   const [guestInfoTable, setGuestInfoTable] = useState<TableData | null>(null);
+  const [guestInfoName, setGuestInfoName] = useState('');
+  const [guestInfoNote, setGuestInfoNote] = useState('');
+  const openedFromBookingRef = React.useRef(false);
   const [pendingGuestCount, setPendingGuestCount] = useState<number>(0);
   const [tableNote, setTableNote] = useState<string>('');
   const [tableOrderNotes, setTableOrderNotes] = useState<Record<string, string>>({});
@@ -96,30 +145,50 @@ export default function FloorMapClient() {
   const zoneCatalogRef = React.useRef<ZoneData[]>(zoneCatalog);
   zoneCatalogRef.current = zoneCatalog;
 
+  const bookingsSigRef = React.useRef('');
+  const tablesReqRef = React.useRef(0);
+  const pollBusyRef = React.useRef(false);
+  const reservedViewRef = React.useRef(new Map<string, TableData>());
+  const wsPatchesRef = React.useRef(new Map<string, { status: TableData['status']; guests?: number; orderTotal?: number }>());
+  const wsFrameRef = React.useRef(0);
+
   const fetchBookings = useCallback(async () => {
     try {
       const data = await bookingsApi.list({ date: localDateString(), status: 'upcoming' });
+      const sig = data.map((b) => `${b.id}:${b.status}:${b.tableId}:${b.time}`).join('|');
+      if (sig === bookingsSigRef.current) return;
+      bookingsSigRef.current = sig;
       setBookings(data);
     } catch {
-      setBookings([]);
+      /* keep the last list so a blip does not clear reserved tables */
     }
   }, []);
 
   const displayTables = useMemo(
-    () => applyBookingStatus(tables, bookings),
+    () => applyBookingStatus(tables, bookings, localDateString(), reservedViewRef.current),
     [tables, bookings],
   );
 
+  const activeZoneMetas = useMemo(
+    () => zoneCatalog.filter((z) => z.isActive).map(toZoneMeta),
+    [zoneCatalog],
+  );
+
   // ── Fetch tables from API ──────────────────────────────────────────────────
-  /** `silent` skips the loading spinner (used by the 4s background poll). */
+  /** `silent` skips the loading spinner (used by the background poll). */
   const fetchTables = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    const reqId = ++tablesReqRef.current;
     if (!silent) setLoading(true);
     try {
       const apiTables = await tablesApi.list();
-      setTables(apiTables.map((t) => apiTableToLocal(t, zoneCatalogRef.current)));
+      if (reqId !== tablesReqRef.current) return;
+      const local = apiTables.map((t) => apiTableToLocal(t, zoneCatalogRef.current));
+      const apply = (prev: TableData[]) => shareTableList(prev, local);
+      if (silent) React.startTransition(() => setTables(apply));
+      else setTables(apply);
     } catch {
-      if (!silent) setTables([]);
+      if (!silent && reqId === tablesReqRef.current) setTables([]);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -143,22 +212,59 @@ export default function FloorMapClient() {
     }
   }, []);
 
+  // Seat from Table Bookings lands here and opens the same guest → menu flow as a floor tap.
+  useEffect(() => {
+    if (openedFromBookingRef.current || tables.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const openId = params.get('openTable');
+    if (!openId) return;
+    const table = tables.find((t) => t.id === openId);
+    if (!table) return;
+    openedFromBookingRef.current = true;
+    const guests = Number(params.get('guests'));
+    const note = params.get('note') ?? '';
+    const seated: TableData = {
+      ...table,
+      guests: Number.isFinite(guests) && guests > 0 ? guests : table.guests,
+      status: 'occupied',
+    };
+    setZoneFilter(seated.zone || 'all');
+    setSelectedTable(seated);
+    setTables((prev) => prev.map((t) => (t.id === seated.id ? { ...t, ...seated } : t)));
+    setTableNote(note);
+    setGuestInfoNote(note);
+    setGuestInfoName(params.get('guest') ?? '');
+    setMenuShowAll(false);
+    setGuestInfoTable(seated);
+    window.history.replaceState(null, '', window.location.pathname);
+  }, [tables]);
+
   // Re-bind table.zone to canonical zone ids once the zone catalog is available
   useEffect(() => {
     if (zoneCatalog.length === 0) return;
-    setTables((prev) =>
-      prev.map((t) => {
+    setTables((prev) => {
+      let changed = false;
+      const next = prev.map((t) => {
         const matched = findZone(zoneCatalog, t.zone);
-        return matched && matched.id !== t.zone ? { ...t, zone: matched.id } : t;
-      }),
-    );
+        if (!matched || matched.id === t.zone) return t;
+        changed = true;
+        return { ...t, zone: matched.id };
+      });
+      return changed ? next : prev;
+    });
   }, [zoneCatalog]);
 
   const syncTableGuestCount = useCallback((tableId: string, guestCount: number) => {
     if (!Number.isFinite(guestCount) || guestCount < 1) return;
-    setTables(prev =>
-      prev.map(t => (t.id === tableId ? { ...t, guests: guestCount } : t)),
-    );
+    setTables(prev => {
+      let changed = false;
+      const next = prev.map(t => {
+        if (t.id !== tableId || t.guests === guestCount) return t;
+        changed = true;
+        return { ...t, guests: guestCount };
+      });
+      return changed ? next : prev;
+    });
     setSelectedTable(prev =>
       prev?.id === tableId ? { ...prev, guests: guestCount } : prev,
     );
@@ -230,23 +336,38 @@ export default function FloorMapClient() {
             orderTotal?: number;
           };
           const party = payload.guestCount ?? payload.guests;
-          setTables(prev => prev.map(t => {
-            if (t.id !== payload.id) return t;
-            return {
-              ...t,
-              status: payload.status as TableData['status'],
-              guests: party ?? t.guests,
-              orderTotal: payload.orderTotal ?? t.orderTotal,
-            };
-          }));
-          // Keep selected table in sync
-          setSelectedTable(prev => {
-            if (!prev || prev.id !== payload.id) return prev;
-            return {
-              ...prev,
-              status: payload.status as TableData['status'],
-              guests: party ?? prev.guests,
-            };
+          wsPatchesRef.current.set(payload.id, {
+            status: payload.status as TableData['status'],
+            guests: party,
+            orderTotal: payload.orderTotal,
+          });
+          if (wsFrameRef.current) return;
+          wsFrameRef.current = requestAnimationFrame(() => {
+            wsFrameRef.current = 0;
+            const batch = wsPatchesRef.current;
+            if (batch.size === 0) return;
+            wsPatchesRef.current = new Map();
+            setTables((prev) => {
+              let changed = false;
+              const next = prev.map((t) => {
+                const patch = batch.get(t.id);
+                if (!patch) return t;
+                const guests = patch.guests ?? t.guests;
+                const orderTotal = patch.orderTotal ?? t.orderTotal;
+                if (t.status === patch.status && t.guests === guests && t.orderTotal === orderTotal) return t;
+                changed = true;
+                return { ...t, status: patch.status, guests, orderTotal };
+              });
+              return changed ? next : prev;
+            });
+            setSelectedTable((prev) => {
+              if (!prev) return prev;
+              const patch = batch.get(prev.id);
+              if (!patch) return prev;
+              const guests = patch.guests ?? prev.guests;
+              if (prev.status === patch.status && prev.guests === guests) return prev;
+              return { ...prev, status: patch.status, guests };
+            });
           });
         } catch {
           // ignore malformed frames
@@ -277,14 +398,35 @@ export default function FloorMapClient() {
     void fetchZones();
     connectTableStatusWS();
 
-    // Background refresh — once every 4 seconds (no loading flicker)
-    const pollId = setInterval(() => {
-      void fetchTables({ silent: true });
-      void fetchBookings();
-    }, 4000);
+    // WebSocket pushes table status. This poll is only a backup, and it
+    // skips the redraw when nothing changed. Hidden tabs do not poll.
+    const poll = () => {
+      if (document.hidden || pollBusyRef.current) return;
+      pollBusyRef.current = true;
+      void Promise.all([fetchTables({ silent: true }), fetchBookings()]).finally(() => {
+        pollBusyRef.current = false;
+      });
+    };
+    const pollId = setInterval(poll, 15000);
+    document.addEventListener('visibilitychange', poll);
+    const prefetchMenu = () => {
+      void menuApi.categories();
+      void menuApi.items();
+    };
+    let cancelPrefetch = () => {};
+    if (typeof requestIdleCallback === 'function') {
+      const idleId = requestIdleCallback(prefetchMenu);
+      cancelPrefetch = () => cancelIdleCallback(idleId);
+    } else {
+      const timeoutId = window.setTimeout(prefetchMenu, 400);
+      cancelPrefetch = () => clearTimeout(timeoutId);
+    }
 
     return () => {
       clearInterval(pollId);
+      document.removeEventListener('visibilitychange', poll);
+      cancelPrefetch();
+      if (wsFrameRef.current) cancelAnimationFrame(wsFrameRef.current);
       wsAllowReconnectRef.current = false;
       if (wsReconnectRef.current) {
         clearTimeout(wsReconnectRef.current);
@@ -496,6 +638,8 @@ export default function FloorMapClient() {
 
   const handleOpenMenu = (table: TableData) => {
     setMenuShowAll(false);
+    setGuestInfoName('');
+    setGuestInfoNote('');
     // For free tables, show guest info step first
     if (table.status === 'available') {
       setGuestInfoTable(table);
@@ -699,7 +843,7 @@ export default function FloorMapClient() {
         {/* Quick Stats Bar */}
         <div className="flex items-center gap-2 md:gap-3 flex-wrap">
           <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-muted/30 border border-border">
-            <Map size={12} className="text-muted-foreground" />
+            <MapIcon size={12} className="text-muted-foreground" />
             <span className="text-xs text-muted-foreground font-medium">Floor Plan</span>
           </div>
 
@@ -827,10 +971,12 @@ export default function FloorMapClient() {
               onSelectTable={handleSelectTable}
               onOpenMenu={handleOpenMenu}
               zoneFilter={zoneFilter}
+              zones={activeZoneMetas}
               editMode={editMode}
               onUpdatePositions={handleUpdatePositions}
               savedPositions={savedPositions}
               onChangeShape={handleChangeShape}
+              onActiveZoneChange={setVisibleZoneId}
             />
           </div>
 
@@ -904,30 +1050,38 @@ export default function FloorMapClient() {
         <GuestInfoModal
           table={guestInfoTable}
           zones={zoneCatalog}
-          onClose={() => setGuestInfoTable(null)}
+          initialGuests={guestInfoTable.guests}
+          initialNote={guestInfoNote}
+          guestName={guestInfoName}
+          onClose={() => { setGuestInfoTable(null); setGuestInfoName(''); setGuestInfoNote(''); }}
           onConfirm={handleGuestInfoConfirm}
         />
       )}
 
-      {/* Modals */}
-      <LockModal isOpen={lockOpen} onClose={() => setLockOpen(false)} onUnlock={handleUnlock} />
-      <ManagerPinModal
-        isOpen={managerPinOpen}
-        onClose={() => setManagerPinOpen(false)}
-        onApprove={handleManagerApprove}
-        actionLabel={managerPinAction}
-        action={
-          managerPinAction.toLowerCase().includes('void')
-            ? 'VOID_ITEM'
-            : managerPinAction.toLowerCase().includes('clear')
-              ? 'CLEAR_TABLE'
-              : managerPinAction.toLowerCase().includes('change table')
-                ? 'TRANSFER_TABLE'
-                : 'PRIVILEGED_ACTION'
-        }
-      />
+      {/* Modals — mounted only while open so their code stays off the floor */}
+      {lockOpen && (
+        <LockModal isOpen={lockOpen} onClose={() => setLockOpen(false)} onUnlock={handleUnlock} />
+      )}
+      {managerPinOpen && (
+        <ManagerPinModal
+          isOpen={managerPinOpen}
+          onClose={() => setManagerPinOpen(false)}
+          onApprove={handleManagerApprove}
+          actionLabel={managerPinAction}
+          action={
+            managerPinAction.toLowerCase().includes('void')
+              ? 'VOID_ITEM'
+              : managerPinAction.toLowerCase().includes('clear')
+                ? 'CLEAR_TABLE'
+                : managerPinAction.toLowerCase().includes('change table')
+                  ? 'TRANSFER_TABLE'
+                  : 'PRIVILEGED_ACTION'
+          }
+        />
+      )}
       {selectedTable && (
         <>
+          {paymentOpen && (
           <PaymentModal
             isOpen={paymentOpen}
             onClose={() => setPaymentOpen(false)}
@@ -946,6 +1100,8 @@ export default function FloorMapClient() {
                 status: i.status,
               }))}
           />
+          )}
+          {splitOpen && (
           <SplitBillModal
             isOpen={splitOpen}
             onClose={() => setSplitOpen(false)}
@@ -968,6 +1124,8 @@ export default function FloorMapClient() {
               if (selectedTable) void fetchOrderForTable(selectedTable.id);
             }}
           />
+          )}
+          {transferOpen && (
           <TransferTableModal
             isOpen={transferOpen}
             onClose={() => setTransferOpen(false)}
@@ -976,9 +1134,17 @@ export default function FloorMapClient() {
             zones={zoneCatalog}
             onTransferred={targetId => void handleTableTransferred(targetId)}
           />
+          )}
         </>
       )}
-      <NewTableDrawer isOpen={newTableOpen} onClose={() => setNewTableOpen(false)} onTableAdded={handleTableAdded} />
+      {newTableOpen && (
+      <NewTableDrawer
+        isOpen={newTableOpen}
+        onClose={() => setNewTableOpen(false)}
+        onTableAdded={handleTableAdded}
+        defaultZoneId={zoneFilter !== 'all' ? zoneFilter : visibleZoneId}
+      />
+      )}
     </div>
   );
 }

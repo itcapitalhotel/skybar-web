@@ -9,6 +9,7 @@ import {
   RefreshCw, Layers, Eye, EyeOff, UtensilsCrossed,
 } from 'lucide-react';
 import { menuCategoryApi } from '@/lib/api/client';
+import { useAuthRole } from '@/hooks/useAuthUser';
 import type { MenuCategory, CreateMenuCategoryRequest, MenuCategoryType } from '@/lib/api/types';
 import {
   MENU_CATEGORY_TYPE_OPTIONS,
@@ -36,6 +37,7 @@ const EMPTY_FORM: CategoryFormData = {
 };
 
 export default function MenuCategoriesPage() {
+  const canDelete = useAuthRole() === 'Admin';
   const [lockOpen, setLockOpen] = useState(false);
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -308,7 +310,7 @@ export default function MenuCategoriesPage() {
                   >
                     <Edit2 size={12} /> Edit
                   </button>
-                  {deleteConfirm === cat.id ? (
+                  {canDelete && (deleteConfirm === cat.id ? (
                     <div className="flex items-center gap-1 ml-auto">
                       <button
                         onClick={() => void handleDelete(cat.id)}
@@ -330,7 +332,7 @@ export default function MenuCategoriesPage() {
                     >
                       <Trash2 size={12} />
                     </button>
-                  )}
+                  ))}
                 </div>
               </div>
             ))}

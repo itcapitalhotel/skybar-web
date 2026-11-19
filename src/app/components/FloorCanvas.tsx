@@ -2,8 +2,6 @@
 
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { TableData, TableShape, ZoneMeta } from './floorData';
-import { zonesApi } from '@/lib/api/client';
-import { zoneToMeta } from '@/lib/api/mappers';
 import { Move, Save, RotateCcw, Users, Clock, DollarSign, Circle, Square, LayoutGrid, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import { formatTimer } from './floorData';
 
@@ -15,17 +13,21 @@ interface FloorCanvasProps {
   onSelectTable: (table: TableData) => void;
   onOpenMenu: (table: TableData) => void;
   zoneFilter: ZoneFilter;
+  /** Active zones from GET /zones — not a fixed VIP/Bar/Terrace/Cabana list */
+  zones?: ZoneMeta[];
   editMode: boolean;
   onUpdatePositions: (positions: Record<string, { x: number; y: number }>) => Promise<void>;
   savedPositions: Record<string, { x: number; y: number }>;
   onChangeShape?: (tableId: string, shape: TableShape) => Promise<void>;
+  /** Zone currently drawn on the canvas (so Add Table targets Lounge, not the first zone). */
+  onActiveZoneChange?: (zoneId: string) => void;
 }
 
 const STATUS_COLORS: Record<string, { ring: string; bg: string; label: string; text: string; glow: string }> = {
-  available: { ring: '#10b981', bg: 'rgba(16,185,129,0.13)', label: 'Free', text: '#10b981', glow: 'rgba(16,185,129,0.35)' },
-  occupied:  { ring: '#f43f5e', bg: 'rgba(244,63,94,0.10)',  label: 'Occupied', text: '#f43f5e', glow: 'rgba(244,63,94,0.3)' },
-  reserved:  { ring: '#f59e0b', bg: 'rgba(245,158,11,0.10)', label: 'Reserved', text: '#f59e0b', glow: 'rgba(245,158,11,0.3)' },
-  bill:      { ring: '#06b6d4', bg: 'rgba(6,182,212,0.10)',  label: 'Bill Ready', text: '#06b6d4', glow: 'rgba(6,182,212,0.3)' },
+  available: { ring: '#10b981', bg: 'rgba(16,185,129,0.28)', label: 'Free', text: '#10b981', glow: 'rgba(16,185,129,0.35)' },
+  occupied:  { ring: '#f43f5e', bg: 'rgba(244,63,94,0.28)',  label: 'Occupied', text: '#f43f5e', glow: 'rgba(244,63,94,0.3)' },
+  reserved:  { ring: '#f59e0b', bg: 'rgba(245,158,11,0.28)', label: 'Reserved', text: '#f59e0b', glow: 'rgba(245,158,11,0.3)' },
+  bill:      { ring: '#06b6d4', bg: 'rgba(6,182,212,0.28)',  label: 'Bill Ready', text: '#06b6d4', glow: 'rgba(6,182,212,0.3)' },
 };
 
 function getTableDimensions(shape: TableShape) {
@@ -42,7 +44,7 @@ function BlueprintBg({ zoneColor }: { zoneColor: string }) {
       style={{
         position: 'absolute',
         inset: 0,
-        background: `
+        backgroundImage: `
           linear-gradient(${zoneColor} 1px, transparent 1px),
           linear-gradient(90deg, ${zoneColor} 1px, transparent 1px),
           linear-gradient(rgba(15,23,42,0.0) 1px, transparent 1px),
@@ -171,7 +173,7 @@ interface TableNodeProps {
   onChangeShape?: (id: string, shape: TableShape) => void;
 }
 
-function TableNode({
+const TableNode = React.memo(function TableNode({
   table, x, y, isSelected, isDragging, editMode,
   showShapePicker, onPointerDown, onClick, onToggleShapePicker, onChangeShape,
 }: TableNodeProps) {
@@ -195,9 +197,8 @@ function TableNode({
         borderRadius,
         background: colors.bg,
         border: `2px solid ${isSelected ? '#06b6d4' : colors.ring}`,
-        boxShadow: isSelected
-          ? `0 0 0 3px rgba(6,182,212,0.4), 0 0 20px ${colors.glow}`
-          : `0 0 12px ${colors.glow}`,
+        boxShadow: isSelected ? `0 0 0 3px rgba(6,182,212,0.4)` : 'none',
+        contain: 'layout style',
         cursor: editMode ? (isDragging ? 'grabbing' : 'grab') : 'pointer',
         transition: isDragging ? 'none' : 'box-shadow 0.2s, border-color 0.2s',
         zIndex: isDragging ? 100 : isSelected ? 10 : 1,
@@ -211,7 +212,6 @@ function TableNode({
         WebkitUserSelect: 'none',
         // Critical for iPad: prevent page scroll from stealing the drag gesture
         touchAction: editMode ? 'none' : 'manipulation',
-        backdropFilter: 'blur(4px)',
       }}
     >
       {/* Shape icon top-left (non-stool) */}
@@ -310,20 +310,18 @@ function TableNode({
         </>
       )}
 
-      {/* Free table pulse ring */}
       {table.status === 'available' && !editMode && (
         <div style={{
           position: 'absolute',
-          inset: -5,
+          inset: -4,
           borderRadius: isCircle ? '50%' : isCabana ? 22 : 14,
-          border: '1.5px solid rgba(16,185,129,0.3)',
-          animation: 'pulseRing 2.5s ease-in-out infinite',
+          border: '1.5px solid rgba(16,185,129,0.35)',
           pointerEvents: 'none',
         }} />
       )}
     </div>
   );
-}
+});
 
 // ─── Zone Blueprint Page ──────────────────────────────────────────────────────
 interface ZonePageProps {
@@ -361,6 +359,16 @@ function ZonePage({
   const dragMovedRef = useRef(false);
   const draggingRef = useRef(dragging);
   draggingRef.current = dragging;
+  const tablesRef = useRef(tables);
+  tablesRef.current = tables;
+  const positionsRef = useRef(positions);
+  positionsRef.current = positions;
+  const editModeRef = useRef(editMode);
+  editModeRef.current = editMode;
+  const onSelectRef = useRef(onSelectTable);
+  onSelectRef.current = onSelectTable;
+  const onOpenRef = useRef(onOpenMenu);
+  onOpenRef.current = onOpenMenu;
 
   const canvasW = Math.max(zone.canvasWidth, ...tables.map(t => {
     const pos = positions[t.id] ?? { x: t.x, y: t.y };
@@ -372,15 +380,15 @@ function ZonePage({
   }), 700);
 
   const handlePointerDown = useCallback((e: React.PointerEvent, tableId: string) => {
-    if (!editMode) return;
+    if (!editModeRef.current) return;
     // Ignore non-primary mouse buttons; allow touch/pen
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
     dragMovedRef.current = false;
-    const table = tables.find(t => t.id === tableId);
-    if (table) onSelectTable(table);
-    const pos = positions[tableId] ?? { x: 0, y: 0 };
+    const table = tablesRef.current.find(t => t.id === tableId);
+    if (table) onSelectRef.current(table);
+    const pos = positionsRef.current[tableId] ?? { x: 0, y: 0 };
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -394,7 +402,25 @@ function ZonePage({
       origY: pos.y,
       pointerId: e.pointerId,
     });
-  }, [editMode, positions, tables, onSelectTable]);
+  }, []);
+
+  const handleTableClick = useCallback((e: React.MouseEvent, table: TableData) => {
+    e.stopPropagation();
+    if (editModeRef.current) {
+      if (dragMovedRef.current) {
+        dragMovedRef.current = false;
+        return;
+      }
+      onSelectRef.current(table);
+      return;
+    }
+    onSelectRef.current(table);
+    if (table.status === 'available') onOpenRef.current(table);
+  }, []);
+
+  const toggleShapePicker = useCallback((id: string) => {
+    setShapePickerFor(prev => prev === id ? '' : id);
+  }, []);
 
   // Window-level listeners so iPad drag keeps working when finger leaves the table
   useEffect(() => {
@@ -428,20 +454,6 @@ function ZonePage({
       window.removeEventListener('pointercancel', onUp);
     };
   }, [dragging, onPositionChange, zoom]);
-
-  const handleTableClick = (e: React.MouseEvent, table: TableData) => {
-    e.stopPropagation();
-    if (editMode) {
-      if (dragMovedRef.current) {
-        dragMovedRef.current = false;
-        return;
-      }
-      onSelectTable(table);
-      return;
-    }
-    onSelectTable(table);
-    if (table.status === 'available') onOpenMenu(table);
-  };
 
   const gridColor = `rgba(${zone.id === 'vip' ? '245,158,11' : zone.id === 'bar' ? '6,182,212' : zone.id === 'terrace' ? '16,185,129' : '168,85,247'},0.05)`;
 
@@ -579,7 +591,7 @@ function ZonePage({
                   showShapePicker={shapePickerFor === table.id}
                   onPointerDown={handlePointerDown}
                   onClick={handleTableClick}
-                  onToggleShapePicker={id => setShapePickerFor(prev => prev === id ? '' : id)}
+                  onToggleShapePicker={toggleShapePicker}
                   onChangeShape={onChangeShape}
                 />
               );
@@ -606,10 +618,12 @@ export default function FloorCanvas({
   onSelectTable,
   onOpenMenu,
   zoneFilter,
+  zones,
   editMode,
   onUpdatePositions,
   savedPositions,
   onChangeShape,
+  onActiveZoneChange,
 }: FloorCanvasProps) {
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(() => {
     const init: Record<string, { x: number; y: number }> = {};
@@ -620,13 +634,6 @@ export default function FloorCanvas({
   const [saving, setSaving] = useState(false);
   const [activeZoneIdx, setActiveZoneIdx] = useState(0);
   const [zoom, setZoom] = useState(1);
-  const [zones, setZones] = useState<ZoneMeta[]>([]);
-
-  useEffect(() => {
-    zonesApi.list()
-      .then(data => setZones(data.filter(z => z.isActive).map(zoneToMeta)))
-      .catch(() => setZones([]));
-  }, []);
 
   const MIN_ZOOM = 0.3;
   const MAX_ZOOM = 2.5;
@@ -638,9 +645,15 @@ export default function FloorCanvas({
 
   useEffect(() => {
     setPositions(prev => {
+      let changed = false;
       const next = { ...prev };
-      tables.forEach(t => { if (!next[t.id]) next[t.id] = savedPositions[t.id] ?? { x: t.x, y: t.y }; });
-      return next;
+      tables.forEach(t => {
+        if (!next[t.id]) {
+          next[t.id] = savedPositions[t.id] ?? { x: t.x, y: t.y };
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
     });
   }, [tables, savedPositions]);
 
@@ -667,10 +680,18 @@ export default function FloorCanvas({
     setHasUnsaved(false);
   };
 
-  // Determine which zones to show
-  const zonesToShow = zoneFilter === 'all' ? zones : zones.filter(z => z.id === zoneFilter);
-  const currentZoneIdx = zoneFilter === 'all' ? activeZoneIdx : 0;
-  const currentZone = zonesToShow[currentZoneIdx] ?? zonesToShow[0];
+  // Determine which zones to show. Guard an empty catalog so the page
+  // renders while GET /zones is still in flight.
+  const zoneList = zones ?? [];
+  const zonesToShow = zoneFilter === 'all' ? zoneList : zoneList.filter(z => z.id === zoneFilter);
+  const safeZoneIdx = zoneFilter === 'all'
+    ? Math.min(activeZoneIdx, Math.max(zoneList.length - 1, 0))
+    : 0;
+  const currentZone = zonesToShow[safeZoneIdx] ?? zonesToShow[0];
+
+  useEffect(() => {
+    if (currentZone?.id) onActiveZoneChange?.(currentZone.id);
+  }, [currentZone?.id, onActiveZoneChange]);
 
   if (!currentZone) return null;
 
@@ -698,7 +719,7 @@ export default function FloorCanvas({
           overflowX: 'auto',
         }}>
           <span style={{ fontSize: 10, color: '#475569', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', marginRight: 6, whiteSpace: 'nowrap' }}>Floor Plans:</span>
-          {zones.map((z, idx) => (
+          {zoneList.map((z, idx) => (
             <button
               key={z.id}
               onClick={() => setActiveZoneIdx(idx)}
@@ -735,9 +756,9 @@ export default function FloorCanvas({
               <ChevronLeft size={12} />
             </button>
             <button
-              onClick={() => setActiveZoneIdx(i => Math.min(zones.length - 1, i + 1))}
-              disabled={activeZoneIdx === zones.length - 1}
-              style={{ padding: '3px 6px', borderRadius: 6, background: 'rgba(100,116,139,0.1)', border: '1px solid rgba(100,116,139,0.2)', color: activeZoneIdx === zones.length - 1 ? '#334155' : '#94a3b8', cursor: activeZoneIdx === zones.length - 1 ? 'not-allowed' : 'pointer' }}
+              onClick={() => setActiveZoneIdx(i => Math.min(Math.max(zoneList.length - 1, 0), i + 1))}
+              disabled={zoneList.length === 0 || activeZoneIdx >= zoneList.length - 1}
+              style={{ padding: '3px 6px', borderRadius: 6, background: 'rgba(100,116,139,0.1)', border: '1px solid rgba(100,116,139,0.2)', color: zoneList.length === 0 || activeZoneIdx >= zoneList.length - 1 ? '#334155' : '#94a3b8', cursor: zoneList.length === 0 || activeZoneIdx >= zoneList.length - 1 ? 'not-allowed' : 'pointer' }}
             >
               <ChevronRight size={12} />
             </button>

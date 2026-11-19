@@ -208,71 +208,126 @@ function parseYmd(raw: string): { y: number; m: number; d: number } | null {
   return { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
 }
 
-function formatHourShort(hour: string | number): string {
-  const raw = String(hour ?? '');
-  const hhmm = raw.match(/^(\d{1,2})/);
-  const h = typeof hour === 'number' ? hour : hhmm ? Number(hhmm[1]) : NaN;
-  if (!Number.isFinite(h)) return raw.slice(0, 4);
+function formatHourShort(hour: number): string {
+  const h = ((Math.floor(hour) % 24) + 24) % 24;
   const h12 = h % 12 || 12;
   return `${h12}${h >= 12 ? 'p' : 'a'}`;
 }
 
-function formatHourFull(hour: string | number): string {
-  const raw = String(hour ?? '');
-  const hhmm = raw.match(/^(\d{1,2})/);
-  const h = typeof hour === 'number' ? hour : hhmm ? Number(hhmm[1]) : NaN;
-  if (!Number.isFinite(h)) return raw;
+function formatHourFull(hour: number): string {
+  const h = ((Math.floor(hour) % 24) + 24) % 24;
   const h12 = h % 12 || 12;
   return `${h12} ${h >= 12 ? 'PM' : 'AM'}`;
 }
 
+/**
+ * Parse an hour-of-day (0–23) from API keys/labels.
+ * IMPORTANT: do not use /^(\d{1,2})/ on ISO dates — that matches year `2026` → always 8pm.
+ */
+function parseHourOfDay(raw: string | number, timezone: string): number | null {
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const h = Math.floor(raw);
+    return h >= 0 && h <= 23 ? h : null;
+  }
+
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+
+  // "9 PM" / "9p" / "9pm"
+  const ampm = s.match(/^(\d{1,2})\s*(am|pm|a|p)\.?$/i);
+  if (ampm) {
+    let h = Number(ampm[1]) % 12;
+    if (/^pm?$/i.test(ampm[2])) h += 12;
+    return h;
+  }
+
+  // Plain "21:00" / "9:00" (not a YYYY-MM-DD date)
+  if (!/^\d{4}-\d{2}-\d{2}/.test(s) && !s.includes('T')) {
+    const hhmm = s.match(/^(\d{1,2})(?::(\d{2}))?$/);
+    if (hhmm) {
+      const h = Number(hhmm[1]);
+      if (h >= 0 && h <= 23) return h;
+    }
+  }
+
+  // ISO / datetime → hour in venue timezone
+  if (/^\d{4}-\d{2}-\d{2}/.test(s) || s.includes('T')) {
+    const d = new Date(s);
+    if (!Number.isNaN(d.getTime())) {
+      try {
+        const hourPart = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone || DEFAULT_TIMEZONE,
+          hour: 'numeric',
+          hourCycle: 'h23',
+        }).formatToParts(d).find((p) => p.type === 'hour')?.value;
+        const h = Number(hourPart);
+        if (Number.isFinite(h) && h >= 0 && h <= 23) return h;
+      } catch {
+        /* fall through */
+      }
+    }
+  }
+
+  return null;
+}
+
 /** Compact professional axis ticks — keep tooltips readable via fullLabel. */
-function formatAxisLabel(key: string, apiLabel: string, g: RevenueGranularity): { label: string; fullLabel: string } {
+function formatAxisLabel(
+  key: string,
+  apiLabel: string,
+  g: RevenueGranularity,
+  timezone: string = DEFAULT_TIMEZONE,
+): { key: string; label: string; fullLabel: string } {
   const k = String(key ?? '').trim();
   const api = String(apiLabel ?? '').trim();
 
   if (g === 'hourly') {
-    return { label: formatHourShort(k || api), fullLabel: formatHourFull(k || api) };
+    const hour = parseHourOfDay(k, timezone) ?? parseHourOfDay(api, timezone);
+    if (hour != null) {
+      const normKey = `${String(hour).padStart(2, '0')}:00`;
+      return { key: normKey, label: formatHourShort(hour), fullLabel: formatHourFull(hour) };
+    }
+    return { key: k || api, label: (api || k).slice(0, 4), fullLabel: api || k };
   }
 
   if (g === 'daily') {
     const ymd = parseYmd(k) || parseYmd(api);
     if (ymd) {
       const mon = MONTHS_SHORT[ymd.m - 1] ?? '';
-      return { label: `${ymd.d}`, fullLabel: `${mon} ${ymd.d}` };
+      return { key: k || api, label: `${ymd.d}`, fullLabel: `${mon} ${ymd.d}` };
     }
     const named = api.match(/([A-Za-z]{3})\s+(\d{1,2})/);
-    if (named) return { label: named[2], fullLabel: `${named[1]} ${named[2]}` };
-    return { label: api.slice(0, 4) || k.slice(-2), fullLabel: api || k };
+    if (named) return { key: k || api, label: named[2], fullLabel: `${named[1]} ${named[2]}` };
+    return { key: k || api, label: api.slice(0, 4) || k.slice(-2), fullLabel: api || k };
   }
 
   if (g === 'weekly') {
     const ymd = parseYmd(k);
     if (ymd) {
       const mon = MONTHS_SHORT[ymd.m - 1] ?? '';
-      return { label: `${ymd.d} ${mon}`, fullLabel: `Week of ${mon} ${ymd.d}` };
+      return { key: k || api, label: `${ymd.d} ${mon}`, fullLabel: `Week of ${mon} ${ymd.d}` };
     }
     const cleaned = api.replace(/^W\s*/i, '').trim();
     const named = cleaned.match(/([A-Za-z]{3})\s+(\d{1,2})/);
-    if (named) return { label: `${named[2]} ${named[1]}`, fullLabel: `Week of ${named[1]} ${named[2]}` };
-    return { label: cleaned.slice(0, 6) || k.slice(5, 10), fullLabel: cleaned || k };
+    if (named) return { key: k || api, label: `${named[2]} ${named[1]}`, fullLabel: `Week of ${named[1]} ${named[2]}` };
+    return { key: k || api, label: cleaned.slice(0, 6) || k.slice(5, 10), fullLabel: cleaned || k };
   }
 
   if (g === 'monthly') {
     const ym = k.match(/^(\d{4})-(\d{2})/) || api.match(/^(\d{4})-(\d{2})/);
     if (ym) {
       const mon = MONTHS_SHORT[Number(ym[2]) - 1] ?? ym[2];
-      return { label: mon, fullLabel: `${mon} ${ym[1]}` };
+      return { key: k || api, label: mon, fullLabel: `${mon} ${ym[1]}` };
     }
     const named = api.match(/([A-Za-z]{3})/);
-    if (named) return { label: named[1], fullLabel: api };
-    return { label: api.slice(0, 3) || k.slice(5, 7), fullLabel: api || k };
+    if (named) return { key: k || api, label: named[1], fullLabel: api };
+    return { key: k || api, label: api.slice(0, 3) || k.slice(5, 7), fullLabel: api || k };
   }
 
   // yearly
   const y = k.match(/^(\d{4})/) || api.match(/^(\d{4})/);
-  if (y) return { label: y[1].slice(2), fullLabel: y[1] }; // '26'
-  return { label: (api || k).slice(0, 4), fullLabel: api || k };
+  if (y) return { key: k || api, label: y[1].slice(2), fullLabel: y[1] }; // '26'
+  return { key: k || api, label: (api || k).slice(0, 4), fullLabel: api || k };
 }
 
 function formatMoneyTick(value: number): string {
@@ -284,10 +339,19 @@ function formatMoneyTick(value: number): string {
   return `$${Math.round(value)}`;
 }
 
-function mapSeriesToChart(rows: AnalyticsRevenueSeriesPoint[], g: RevenueGranularity): RevenuePoint[] {
-  return (rows ?? []).map((row) => {
-    const key = String(row.key ?? '');
-    const { label, fullLabel } = formatAxisLabel(key, String(row.label ?? key), g);
+function mapSeriesToChart(
+  rows: AnalyticsRevenueSeriesPoint[],
+  g: RevenueGranularity,
+  timezone: string = DEFAULT_TIMEZONE,
+): RevenuePoint[] {
+  const points = (rows ?? []).map((row) => {
+    const rawKey = String(row.key ?? '');
+    const { key, label, fullLabel } = formatAxisLabel(
+      rawKey,
+      String(row.label ?? rawKey),
+      g,
+      timezone,
+    );
     return {
       key,
       label,
@@ -296,6 +360,24 @@ function mapSeriesToChart(rows: AnalyticsRevenueSeriesPoint[], g: RevenueGranula
       orders: Number(row.orders) || 0,
     };
   });
+
+  if (g !== 'hourly') return points;
+
+  // Normalize ISO keys → HH:00 and merge any duplicates after TZ conversion
+  const merged = new Map<string, RevenuePoint>();
+  for (const p of points) {
+    const prev = merged.get(p.key);
+    if (!prev) {
+      merged.set(p.key, p);
+    } else {
+      merged.set(p.key, {
+        ...prev,
+        revenue: prev.revenue + p.revenue,
+        orders: prev.orders + p.orders,
+      });
+    }
+  }
+  return [...merged.values()].sort((a, b) => a.key.localeCompare(b.key));
 }
 
 function axisTickInterval(count: number): number | 'preserveStartEnd' {
@@ -338,14 +420,20 @@ function mapZoneSeries(
   zoneKeys: Array<{ zoneId: string; zone: string; key: string; color: string }>,
   selectedZoneId: string,
   g: RevenueGranularity,
+  timezone: string = DEFAULT_TIMEZONE,
 ): ZoneSeriesPoint[] {
   if (selectedZoneId !== 'all') {
-    return mapSeriesToChart(rows, g).map((p) => ({ ...p }));
+    return mapSeriesToChart(rows, g, timezone).map((p) => ({ ...p }));
   }
 
   return (rows ?? []).map((row) => {
-    const key = String(row.key ?? '');
-    const { label, fullLabel } = formatAxisLabel(key, String(row.label ?? key), g);
+    const rawKey = String(row.key ?? '');
+    const { key, label, fullLabel } = formatAxisLabel(
+      rawKey,
+      String(row.label ?? rawKey),
+      g,
+      timezone,
+    );
     const point: ZoneSeriesPoint = {
       key,
       label,
@@ -527,6 +615,7 @@ export default function AnalyticsPage() {
     zoneSeriesKeys,
     selectedZone,
     zoneGranularity,
+    timezone,
   );
 
   const zonePeak = zoneChartData.length > 0
@@ -645,7 +734,7 @@ export default function AnalyticsPage() {
       if (seriesRows.length === 0 && nextGranularity === 'hourly') {
         seriesRows = (summary.hourlyRevenue ?? []).map((h) => ({
           key: String(h.hour),
-          label: formatHourFull(h.hour),
+          label: String(h.hour),
           revenue: Number(h.revenue) || 0,
           orders: Number(h.orders) || 0,
           byZone: [],
@@ -653,7 +742,7 @@ export default function AnalyticsPage() {
       }
 
       applySummaryPanels(summary, zones);
-      setChartData(mapSeriesToChart(seriesRows, nextGranularity));
+      setChartData(mapSeriesToChart(seriesRows, nextGranularity, tz));
 
       // If summary omitted payment/zone, try dedicated dated endpoints
       if (!(summary.paymentBreakdown?.length)) {
