@@ -10,6 +10,7 @@ import type { StaffUser, UserRole, UserStatus, CreateUserRequest, UpdateUserRequ
 const ROLE_CONFIG: Record<UserRole, { color: string; bg: string; border: string; icon: string }> = {
   Admin:     { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.35)', icon: '👑' },
   Manager:   { color: '#a855f7', bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.35)', icon: '🎯' },
+  Supervisor:{ color: '#818cf8', bg: 'rgba(129,140,248,0.12)', border: 'rgba(129,140,248,0.35)', icon: '📋' },
   Bartender: { color: '#06b6d4', bg: 'rgba(6,182,212,0.12)',  border: 'rgba(6,182,212,0.35)',  icon: '🍸' },
   Cashier:   { color: '#10b981', bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.35)', icon: '💳' },
 };
@@ -20,7 +21,7 @@ const STATUS_CONFIG: Record<UserStatus, { label: string; color: string; dot: str
   on_shift: { label: 'On Shift',  color: 'text-cyan-400',    dot: 'bg-cyan-400'    },
 };
 
-const ROLES: UserRole[] = ['Admin', 'Manager', 'Bartender', 'Cashier'];
+const ROLES: UserRole[] = ['Admin', 'Manager', 'Supervisor', 'Bartender', 'Cashier'];
 
 interface UserFormData {
   name: string;

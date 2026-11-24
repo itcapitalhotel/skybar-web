@@ -246,7 +246,7 @@ export const tablesApi = {
   list: (zone?: string) => get<TableData[]>('/tables', zone ? { zone } : undefined),
   get: (id: string) => get<TableData>(`/tables/${id}`),
   create: (data: CreateTableRequest) => post<TableData>('/tables', data),
-  update: (id: string, data: Partial<CreateTableRequest>) => put<TableData>(`/tables/${id}`, data),
+  update: (id: string, data: Partial<CreateTableRequest> & { scale?: number }) => put<TableData>(`/tables/${id}`, data),
   delete: (id: string) => del<{ message: string }>(`/tables/${id}`),
   updateStatus: (
     id: string,

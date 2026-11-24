@@ -24,7 +24,7 @@ export interface ManagerPinVerifyResponse {
 }
 
 // ── Staff / Users ─────────────────────────────────────────────────────────────
-export type UserRole = 'Admin' | 'Manager' | 'Bartender' | 'Cashier';
+export type UserRole = 'Admin' | 'Manager' | 'Supervisor' | 'Bartender' | 'Cashier';
 export type UserStatus = 'active' | 'inactive' | 'on_shift';
 
 export interface StaffUser {
@@ -164,6 +164,8 @@ export interface TableData {
   minSpend?: number;
   orderTotal: number;
   shape: TableShape;
+  /** Visual size multiplier. 1 is the default for that shape. */
+  scale?: number;
   x: number;
   y: number;
 }

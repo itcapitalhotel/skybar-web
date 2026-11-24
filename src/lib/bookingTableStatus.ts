@@ -27,7 +27,7 @@ export function tableHasUpcomingBooking(
 
 function reservedViewMatches<T extends { id: string; status: TableStatus }>(prev: T, source: T): boolean {
   if (prev.status !== 'reserved' || prev.id !== source.id) return false;
-  const fields = ['label', 'zone', 'guests', 'capacity', 'staff', 'seatedMinutes', 'minSpend', 'orderTotal', 'shape', 'x', 'y'] as const;
+  const fields = ['label', 'zone', 'guests', 'capacity', 'staff', 'seatedMinutes', 'minSpend', 'orderTotal', 'shape', 'scale', 'x', 'y'] as const;
   return fields.every((key) => (prev as Record<string, unknown>)[key] === (source as Record<string, unknown>)[key]);
 }
 

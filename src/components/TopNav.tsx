@@ -9,7 +9,7 @@ import { clearAuthToken } from '@/lib/api/config';
 import { useAuthRole, useAuthUser } from '@/hooks/useAuthUser';
 import { NAV_TABS } from '@/lib/navRoles';
 import type { UserRole } from '@/lib/api/types';
-import { Lock, User, Monitor, ShieldCheck, Coffee, CreditCard, LayoutGrid, Menu, X, LogOut } from 'lucide-react';
+import { Lock, User, Monitor, ShieldCheck, Coffee, CreditCard, LayoutGrid, ClipboardList, Menu, X, LogOut } from 'lucide-react';
 
 export type { UserRole };
 
@@ -20,6 +20,7 @@ interface TopNavProps {
 const ROLES: { value: UserRole; label: string; icon: React.ReactNode; color: string }[] = [
   { value: 'Admin', label: 'Admin', icon: <ShieldCheck size={14} />, color: 'text-rose-400' },
   { value: 'Manager', label: 'Manager', icon: <LayoutGrid size={14} />, color: 'text-purple-400' },
+  { value: 'Supervisor', label: 'Supervisor', icon: <ClipboardList size={14} />, color: 'text-indigo-400' },
   { value: 'Bartender', label: 'Bartender/Staff', icon: <Coffee size={14} />, color: 'text-amber-400' },
   { value: 'Cashier', label: 'Cashier', icon: <CreditCard size={14} />, color: 'text-cyan-400' },
 ];
@@ -27,6 +28,7 @@ const ROLES: { value: UserRole; label: string; icon: React.ReactNode; color: str
 const ROLE_BADGE_COLORS: Record<UserRole, string> = {
   Admin: 'bg-rose-500/20 text-rose-400 border-rose-500/30',
   Manager: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+  Supervisor: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30',
   Bartender: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
   Cashier: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
 };

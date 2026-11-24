@@ -15,8 +15,19 @@ export interface TableData {
   minSpend?: number;
   orderTotal: number;
   shape: TableShape;
+  /** Visual size multiplier. 1 is the default for that shape. */
+  scale?: number;
   x: number;
   y: number;
+}
+
+export const MIN_TABLE_SCALE = 0.6;
+export const MAX_TABLE_SCALE = 2.2;
+
+export function clampTableScale(value: number | null | undefined): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 1;
+  return Math.min(MAX_TABLE_SCALE, Math.max(MIN_TABLE_SCALE, Math.round(n * 100) / 100));
 }
 
 export interface ZoneMeta {

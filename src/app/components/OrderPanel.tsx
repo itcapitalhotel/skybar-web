@@ -80,8 +80,8 @@ export default function OrderPanel({
   const total = subtotal + serviceCharge + vat;
   const minSpendGap = table.minSpend ? Math.max(0, table.minSpend - subtotal) : 0;
 
-  const canSplit = role === 'Admin' || role === 'Manager' || role === 'Cashier';
-  const canPay = role === 'Admin' || role === 'Manager' || role === 'Cashier';
+  const canSplit = role === 'Admin' || role === 'Manager' || role === 'Supervisor' || role === 'Cashier';
+  const canPay = role === 'Admin' || role === 'Manager' || role === 'Supervisor' || role === 'Cashier';
 
   const closeVoidModal = () => {
     if (voiding) return;

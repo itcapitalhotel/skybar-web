@@ -1,9 +1,8 @@
 'use client';
 
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { TableData, TableShape, ZoneMeta } from './floorData';
+import { TableData, TableShape, ZoneMeta, clampTableScale, formatTimer } from './floorData';
 import { Move, Save, RotateCcw, Users, Clock, DollarSign, Circle, Square, LayoutGrid, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
-import { formatTimer } from './floorData';
 
 type ZoneFilter = string; // 'all' | zone id from GET /zones
 
@@ -19,6 +18,7 @@ interface FloorCanvasProps {
   onUpdatePositions: (positions: Record<string, { x: number; y: number }>) => Promise<void>;
   savedPositions: Record<string, { x: number; y: number }>;
   onChangeShape?: (tableId: string, shape: TableShape) => Promise<void>;
+  onChangeScale?: (tableId: string, scale: number) => Promise<void>;
   /** Zone currently drawn on the canvas (so Add Table targets Lounge, not the first zone). */
   onActiveZoneChange?: (zoneId: string) => void;
 }
@@ -30,11 +30,12 @@ const STATUS_COLORS: Record<string, { ring: string; bg: string; label: string; t
   bill:      { ring: '#06b6d4', bg: 'rgba(6,182,212,0.28)',  label: 'Bill Ready', text: '#06b6d4', glow: 'rgba(6,182,212,0.3)' },
 };
 
-function getTableDimensions(shape: TableShape) {
-  if (shape === 'circle')  return { w: 84,  h: 84  };
-  if (shape === 'stool')   return { w: 54,  h: 54  };
-  if (shape === 'cabana')  return { w: 170, h: 100 };
-  return { w: 120, h: 80 }; // rect
+function getTableDimensions(shape: TableShape, scale?: number) {
+  const s = clampTableScale(scale);
+  if (shape === 'circle')  return { w: Math.round(84 * s),  h: Math.round(84 * s)  };
+  if (shape === 'stool')   return { w: Math.round(54 * s),  h: Math.round(54 * s)  };
+  if (shape === 'cabana')  return { w: Math.round(170 * s), h: Math.round(100 * s) };
+  return { w: Math.round(120 * s), h: Math.round(80 * s) }; // rect
 }
 
 // ─── Blueprint grid background ────────────────────────────────────────────────
@@ -171,13 +172,18 @@ interface TableNodeProps {
   onClick: (e: React.MouseEvent, table: TableData) => void;
   onToggleShapePicker: (id: string) => void;
   onChangeShape?: (id: string, shape: TableShape) => void;
+  onChangeScale?: (id: string, scale: number) => Promise<void>;
+  zoom: number;
 }
 
 const TableNode = React.memo(function TableNode({
   table, x, y, isSelected, isDragging, editMode,
-  showShapePicker, onPointerDown, onClick, onToggleShapePicker, onChangeShape,
+  showShapePicker, onPointerDown, onClick, onToggleShapePicker, onChangeShape, onChangeScale, zoom,
 }: TableNodeProps) {
-  const { w, h } = getTableDimensions(table.shape);
+  const [liveScale, setLiveScale] = React.useState<number | null>(null);
+  const resizeCleanup = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => () => resizeCleanup.current?.(), []);
+  const { w, h } = getTableDimensions(table.shape, liveScale ?? table.scale);
   const colors = STATUS_COLORS[table.status];
   const isCircle = table.shape === 'circle' || table.shape === 'stool';
   const isCabana = table.shape === 'cabana';
@@ -268,11 +274,63 @@ const TableNode = React.memo(function TableNode({
       {/* Edit mode: drag dots + shape picker toggle */}
       {editMode && (
         <>
-          <div style={{ position: 'absolute', top: 4, right: 4, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, opacity: 0.5 }}>
-            {[0,1,2,3].map(i => (
-              <div key={`dot-${table.id}-${i}`} style={{ width: 3, height: 3, borderRadius: '50%', background: '#94a3b8' }} />
-            ))}
-          </div>
+          {onChangeScale && (
+            <button
+              type="button"
+              aria-label="Resize table"
+              title="Drag to make this table bigger or smaller"
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                resizeCleanup.current?.();
+                const startX = e.clientX;
+                const startY = e.clientY;
+                const origin = clampTableScale(table.scale);
+                const pointerId = e.pointerId;
+                try { (e.currentTarget as HTMLElement).setPointerCapture(pointerId); } catch { /* ignore */ }
+                let latest = origin;
+                const onMove = (ev: PointerEvent) => {
+                  if (ev.pointerId !== pointerId) return;
+                  ev.preventDefault();
+                  const scaleFactor = zoom > 0 ? zoom : 1;
+                  const dx = (ev.clientX - startX) / scaleFactor;
+                  const dy = (ev.clientY - startY) / scaleFactor;
+                  latest = clampTableScale(origin + (dx + dy) / 140);
+                  setLiveScale(latest);
+                };
+                const finish = (ev: PointerEvent) => {
+                  if (ev.pointerId !== pointerId) return;
+                  window.removeEventListener('pointermove', onMove);
+                  window.removeEventListener('pointerup', finish);
+                  window.removeEventListener('pointercancel', finish);
+                  resizeCleanup.current = null;
+                  setLiveScale(null);
+                  if (latest !== origin) void onChangeScale(table.id, latest);
+                };
+                resizeCleanup.current = () => {
+                  window.removeEventListener('pointermove', onMove);
+                  window.removeEventListener('pointerup', finish);
+                  window.removeEventListener('pointercancel', finish);
+                };
+                window.addEventListener('pointermove', onMove, { passive: false });
+                window.addEventListener('pointerup', finish);
+                window.addEventListener('pointercancel', finish);
+              }}
+              style={{
+                position: 'absolute',
+                right: -10,
+                bottom: -10,
+                width: 22,
+                height: 22,
+                borderRadius: 6,
+                background: '#0f172a',
+                border: '2px solid #06b6d4',
+                cursor: 'nwse-resize',
+                touchAction: 'none',
+                zIndex: 6,
+              }}
+            />
+          )}
           {onChangeShape && (
             <button
               onPointerDown={e => e.stopPropagation()}
@@ -334,6 +392,7 @@ interface ZonePageProps {
   onSelectTable: (table: TableData) => void;
   onOpenMenu: (table: TableData) => void;
   onChangeShape?: (id: string, shape: TableShape) => Promise<void>;
+  onChangeScale?: (id: string, scale: number) => Promise<void>;
   hasUnsaved: boolean;
   onSave: () => Promise<void>;
   onReset: () => void;
@@ -343,7 +402,7 @@ interface ZonePageProps {
 
 function ZonePage({
   zone, tables, selectedTableId, editMode, positions,
-  onPositionChange, onSelectTable, onOpenMenu, onChangeShape,
+  onPositionChange, onSelectTable, onOpenMenu, onChangeShape, onChangeScale,
   hasUnsaved, onSave, onReset, saving, zoom,
 }: ZonePageProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -372,11 +431,11 @@ function ZonePage({
 
   const canvasW = Math.max(zone.canvasWidth, ...tables.map(t => {
     const pos = positions[t.id] ?? { x: t.x, y: t.y };
-    return pos.x + getTableDimensions(t.shape).w + 200;
+    return pos.x + getTableDimensions(t.shape, t.scale).w + 200;
   }), 1200);
   const canvasH = Math.max(zone.canvasHeight, ...tables.map(t => {
     const pos = positions[t.id] ?? { x: t.x, y: t.y };
-    return pos.y + getTableDimensions(t.shape).h + 200;
+    return pos.y + getTableDimensions(t.shape, t.scale).h + 200;
   }), 700);
 
   const handlePointerDown = useCallback((e: React.PointerEvent, tableId: string) => {
@@ -572,7 +631,7 @@ function ZonePage({
                 pointerEvents: 'none',
               }}>
                 <Move size={10} style={{ color: '#f59e0b' }} />
-                <span style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600 }}>Tap to edit name · Drag to move · Shape button to change type</span>
+                <span style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600 }}>Drag to move · Drag the corner handle to resize · Shape button to change type</span>
               </div>
             )}
 
@@ -593,6 +652,8 @@ function ZonePage({
                   onClick={handleTableClick}
                   onToggleShapePicker={toggleShapePicker}
                   onChangeShape={onChangeShape}
+                  onChangeScale={onChangeScale}
+                  zoom={zoom}
                 />
               );
             })}
@@ -623,6 +684,7 @@ export default function FloorCanvas({
   onUpdatePositions,
   savedPositions,
   onChangeShape,
+  onChangeScale,
   onActiveZoneChange,
 }: FloorCanvasProps) {
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(() => {
@@ -858,6 +920,7 @@ export default function FloorCanvas({
           onSelectTable={onSelectTable}
           onOpenMenu={onOpenMenu}
           onChangeShape={onChangeShape}
+          onChangeScale={onChangeScale}
           hasUnsaved={hasUnsaved}
           onSave={handleSave}
           onReset={handleReset}

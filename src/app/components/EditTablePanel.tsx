@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Trash2, Save, AlertCircle } from 'lucide-react';
-import type { TableData, TableShape } from './floorData';
+import { clampTableScale, MAX_TABLE_SCALE, MIN_TABLE_SCALE, type TableData, type TableShape } from './floorData';
 import { useAuthRole } from '@/hooks/useAuthUser';
 import TableShapePicker from './TableShapePicker';
 
@@ -13,6 +13,7 @@ interface EditTablePanelProps {
   onRename: (tableId: string, label: string) => Promise<void>;
   onDelete: (tableId: string) => Promise<void>;
   onChangeShape: (tableId: string, shape: TableShape) => Promise<void>;
+  onChangeScale: (tableId: string, scale: number) => Promise<void>;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -29,6 +30,7 @@ export default function EditTablePanel({
   onRename,
   onDelete,
   onChangeShape,
+  onChangeScale,
 }: EditTablePanelProps) {
   const [label, setLabel] = useState('');
   const [shape, setShape] = useState<TableShape>('rect');
@@ -54,6 +56,7 @@ export default function EditTablePanel({
 
   const canDelete = table.status === 'available';
   const labelChanged = label.trim() !== table.label && label.trim().length > 0;
+  const scale = clampTableScale(table.scale);
 
   return (
     <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -91,6 +94,30 @@ export default function EditTablePanel({
         <Save size={14} />
         Save name
       </button>
+
+      <div>
+        <label className="text-xs font-medium text-muted-foreground block mb-1.5">Table size</label>
+        <p className="text-[10px] text-muted-foreground mb-2">Makes this table bigger or smaller on the floor.</p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={saving || scale <= MIN_TABLE_SCALE}
+            onClick={() => void onChangeScale(table.id, clampTableScale(scale - 0.15))}
+            className="flex-1 py-2.5 rounded-xl bg-muted/40 border border-border text-sm font-semibold text-foreground hover:bg-muted/70 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Smaller
+          </button>
+          <span className="w-14 text-center text-sm font-bold tabular-nums text-foreground">{Math.round(scale * 100)}%</span>
+          <button
+            type="button"
+            disabled={saving || scale >= MAX_TABLE_SCALE}
+            onClick={() => void onChangeScale(table.id, clampTableScale(scale + 0.15))}
+            className="flex-1 py-2.5 rounded-xl bg-primary/15 border border-primary/40 text-sm font-semibold text-primary hover:bg-primary/25 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Bigger
+          </button>
+        </div>
+      </div>
 
       <div>
         <label className="text-xs font-medium text-muted-foreground block mb-1.5">Table shape</label>

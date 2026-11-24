@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import TopNav from '@/components/TopNav';
 import { useAuthRole } from '@/hooks/useAuthUser';
+import { isManagerLevel } from '@/lib/navRoles';
 import EditTablePanel from './EditTablePanel';
 import FloorCanvas from './FloorCanvas';
 import OrderPanel from './OrderPanel';
@@ -65,6 +66,7 @@ function sameTableRecord(a: TableData, b: TableData): boolean {
     && a.minSpend === b.minSpend
     && a.orderTotal === b.orderTotal
     && a.shape === b.shape
+    && (a.scale ?? 1) === (b.scale ?? 1)
     && a.x === b.x
     && a.y === b.y;
 }
@@ -99,6 +101,7 @@ function apiTableToLocal(t: ApiTableData, zones: ZoneData[] = []): TableData {
     minSpend: t.minSpend,
     orderTotal: t.orderTotal,
     shape: t.shape as TableData['shape'],
+    scale: t.scale,
     x: t.x,
     y: t.y,
   };
@@ -757,6 +760,22 @@ export default function FloorMapClient() {
     }
   }, [tables]);
 
+  const handleChangeScale = useCallback(async (tableId: string, scale: number) => {
+    const previous = tables.find((t) => t.id === tableId);
+    setTables((prev) => prev.map((t) => (t.id === tableId ? { ...t, scale } : t)));
+    setSelectedTable((prev) => (prev?.id === tableId ? { ...prev, scale } : prev));
+    try {
+      await tablesApi.update(tableId, { scale });
+    } catch {
+      if (previous) {
+        setTables((prev) => prev.map((t) => (t.id === tableId ? { ...t, scale: previous.scale } : t)));
+        setSelectedTable((prev) => (prev?.id === tableId ? { ...prev, scale: previous.scale } : prev));
+      }
+      toast.error('Could not save the table size');
+      throw new Error('Could not save the table size');
+    }
+  }, [tables]);
+
   const handleSelectTable = (table: TableData | null) => {
     setSelectedTable(table);
   };
@@ -875,7 +894,7 @@ export default function FloorMapClient() {
           </div>
 
           {/* Admin controls */}
-          {(role === 'Admin' || role === 'Manager') && (
+          {isManagerLevel(role) && (
             <div className="ml-auto flex gap-1.5 md:gap-2 flex-wrap">
               <button
                 onClick={() => { fetchTables(); fetchBookings(); }}
@@ -949,7 +968,7 @@ export default function FloorMapClient() {
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/15">
             <PenLine size={12} className="text-amber-400 shrink-0" />
             <span className="text-xs text-amber-400/90">
-              Tap a table to <strong className="text-amber-300">rename or delete</strong> in the panel · Drag to move · Save layout when done
+              Tap a table to <strong className="text-amber-300">rename, resize, or delete</strong> · Drag to move · Drag the corner handle to resize
             </span>
           </div>
         ) : (
@@ -976,6 +995,7 @@ export default function FloorMapClient() {
               onUpdatePositions={handleUpdatePositions}
               savedPositions={savedPositions}
               onChangeShape={handleChangeShape}
+              onChangeScale={handleChangeScale}
               onActiveZoneChange={setVisibleZoneId}
             />
           </div>
@@ -1013,6 +1033,7 @@ export default function FloorMapClient() {
                   onRename={handleRenameTable}
                   onDelete={handleDeleteTable}
                   onChangeShape={handleChangeShape}
+                  onChangeScale={handleChangeScale}
                 />
               ) : (
                 <OrderPanel
