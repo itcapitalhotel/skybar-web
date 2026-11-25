@@ -22,7 +22,7 @@ function apiTableToFloor(t: TableData): FloorTableData {
     label: t.label,
     zone: z,
     status: t.status as FloorTableData['status'],
-    guests: t.guests,
+    guests: t.guestCount ?? t.guests ?? 0,
     capacity: t.capacity,
     staff: t.staff,
     seatedMinutes: t.seatedMinutes,
@@ -190,7 +190,7 @@ export default function ShiftCashClient() {
                             {t.status === 'bill' ? 'Bill' : 'Open'}
                           </span>
                         </div>
-                        <p className="text-xs text-muted-foreground">{t.guests} guests</p>
+                        <p className="text-xs text-muted-foreground">{t.guestCount ?? t.guests ?? 0} guests</p>
                         {total > 0 && <p className="text-xs font-semibold text-foreground text-tabular">${total.toFixed(2)}</p>}
                       </button>
                     );
@@ -286,7 +286,7 @@ export default function ShiftCashClient() {
                             {t.status === 'bill' ? 'Bill' : 'Open'}
                           </span>
                         </div>
-                        <p className="text-xs text-muted-foreground">{t.guests} guests</p>
+                        <p className="text-xs text-muted-foreground">{t.guestCount ?? t.guests ?? 0} guests</p>
                         {total > 0 && <p className="text-xs font-semibold text-foreground text-tabular">${total.toFixed(2)}</p>}
                       </div>
                     );

@@ -11,7 +11,7 @@ export function idlePingSlots(): PingSlot[] {
   return Array.from({ length: PRINTER_PING_COUNT }, () => 'idle');
 }
 
-/** True only when API reports a real TCP connect — never trust stub/invalid IP. */
+/** True when the API opened the printer port. A sent test has no latency field. */
 export function isPrinterTcpReachable(printerIp: string, result: PrinterTestResponse): boolean {
   const ip = printerIp.trim();
   if (!isValidIpv4(ip)) return false;
@@ -29,14 +29,11 @@ export function isPrinterTcpReachable(printerIp: string, result: PrinterTestResp
   }
 
   if (result.printerIp && result.printerIp.trim() !== ip) return false;
-
-  if (typeof result.latencyMs === 'number' && result.latencyMs >= 0) return true;
-  if (msg.includes('timeout') || msg.includes('refused') || msg.includes('unreachable')) return false;
-  if (msg.length >= 12 && (msg.includes('connect') || msg.includes('reachable') || msg.includes(':'))) {
-    return true;
+  if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('refused') || msg.includes('unreachable')) {
+    return false;
   }
 
-  return false;
+  return true;
 }
 
 async function verifyLocalTcpInDev(printerIp: string, printerPort: string | number): Promise<{
@@ -82,17 +79,18 @@ export async function runTcpPrinterPingSeries(
     onSlotUpdate(i, 'pending');
     let ok = false;
     try {
-      const result = await configApi.testPrinter(printerIp, printerPort);
-      lastMessage = result.message?.trim() || (result.connected ? 'Printer reachable' : 'No response');
-      ok = isPrinterTcpReachable(printerIp, result);
-      if (result.connected && !ok) {
-        lastMessage = `Connection check failed — ${lastMessage}. Verify the printer address and try again.`;
-      }
-      if (ok) {
-        const local = await verifyLocalTcpInDev(printerIp, printerPort);
-        if (local && !local.ok) {
-          ok = false;
-          lastMessage = `Could not reach ${printerIp}:${printerPort} from this terminal (${local.message}). Check the printer network settings.`;
+      // Check the port from this PC first. That matches a terminal ping on the
+      // same machine and does not send a test ticket.
+      const local = await verifyLocalTcpInDev(printerIp, printerPort);
+      if (local) {
+        ok = local.ok;
+        lastMessage = local.message;
+      } else {
+        const result = await configApi.testPrinter(printerIp, printerPort);
+        lastMessage = result.message?.trim() || (result.connected ? 'Printer reachable' : 'No response');
+        ok = isPrinterTcpReachable(printerIp, result);
+        if (result.connected && !ok) {
+          lastMessage = `Connection check failed — ${lastMessage}. Verify the printer address and try again.`;
         }
       }
     } catch (err) {

@@ -110,7 +110,7 @@ export default function TableCard({ table, isSelected, onSelect, editMode }: Tab
       {table.orderTotal > 0 && (
         <div className="flex items-center gap-0.5 text-xs font-semibold text-foreground text-tabular">
           <DollarSign size={10} />
-          {table.orderTotal.toFixed(0)}
+          {table.orderTotal.toFixed(2)}
         </div>
       )}
 

@@ -256,7 +256,7 @@ const TableNode = React.memo(function TableNode({
       {/* Order total */}
       {!isStool && table.orderTotal > 0 && (
         <span style={{ fontSize: 9, color: '#f1f5f9', fontWeight: 700, marginTop: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-          <DollarSign size={8} />{table.orderTotal}
+          <DollarSign size={8} />{table.orderTotal.toFixed(2)}
         </span>
       )}
 

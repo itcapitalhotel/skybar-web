@@ -660,10 +660,12 @@ export interface PrintReceiptResponse {
   receiptPrintMessage?: string;
 }
 
-/** One guest share for unpaid split bill checks — no payment method/amount. */
+/** One guest share for unpaid split bill checks — same amount meaning as payments/split. */
 export interface PrintSplitReceiptLine {
   guestLabel: string;
   itemIds: string[];
+  /** All-in check total (Equal / By $). Omit for By item to use item-derived totals. */
+  amount?: number;
   tip?: number;
 }
 
@@ -671,6 +673,10 @@ export interface PrintSplitReceiptLine {
 export interface PrintSplitReceiptRequest {
   tableId: string;
   staffId?: string;
+  /** Zone receipt printer id from GET /zones/{zoneId}/printers */
+  printerId?: string;
+  printerIp?: string;
+  printerPort?: number;
   splits: PrintSplitReceiptLine[];
 }
 

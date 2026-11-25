@@ -68,6 +68,53 @@ function equalShares(total: number, count: number): number[] {
   return amounts;
 }
 
+/** Guest number (1-based) for each exploded unit. Targets are all-in dollars, or null for an even value split. */
+function assignUnitsToGuests(
+  units: ExplodedSplitUnit[],
+  guestCount: number,
+  targets: number[] | null,
+): Map<string, number> {
+  const value = Array.from({ length: guestCount }, () => 0);
+  const room = targets ? targets.map((amount) => Math.max(0, amount / 1.21)) : null;
+  const assignment = new Map<string, number>();
+  const sorted = [...units].sort((a, b) => b.price - a.price);
+  for (const unit of sorted) {
+    let best = 0;
+    if (room) {
+      let bestRoom = -Infinity;
+      for (let i = 0; i < guestCount; i += 1) {
+        const left = room[i] - value[i];
+        if (left > bestRoom) {
+          bestRoom = left;
+          best = i;
+        }
+      }
+    } else {
+      for (let i = 1; i < guestCount; i += 1) {
+        if (value[i] < value[best]) best = i;
+      }
+    }
+    assignment.set(unit.key, best + 1);
+    value[best] += unit.price;
+  }
+  const counts = Array.from({ length: guestCount }, () => 0);
+  for (const guest of assignment.values()) counts[guest - 1] += 1;
+  for (let i = 0; i < guestCount; i += 1) {
+    if (counts[i] > 0) continue;
+    let donor = 0;
+    for (let j = 1; j < guestCount; j += 1) {
+      if (counts[j] > counts[donor]) donor = j;
+    }
+    if (counts[donor] < 2) continue;
+    const victim = [...assignment.entries()].find(([, guest]) => guest === donor + 1);
+    if (!victim) continue;
+    assignment.set(victim[0], i + 1);
+    counts[donor] -= 1;
+    counts[i] += 1;
+  }
+  return assignment;
+}
+
 function GuestCardFields({
   cardName,
   cardNumber,
@@ -188,7 +235,6 @@ export default function SplitBillModal({
   const [printingCheck, setPrintingCheck] = useState(false);
 
   const displayTable = tableLabel ?? tableId;
-  const perPerson = total / splitCount;
 
   const splitUnits = useMemo(
     () => explodeItemsToUnits(items.map((it) => ({
@@ -258,9 +304,10 @@ export default function SplitBillModal({
    * When units of the same order line go to different guests, break that line
    * into separate qty lines on the order so each guest gets real itemIds.
    */
-  const materializeByItemAssignments = async (
+  const materializeUnits = async (
     units: ExplodedSplitUnit[],
     staffId: string,
+    guestOf: (unit: ExplodedSplitUnit) => number | undefined,
   ): Promise<Map<number, string[]>> => {
     const bySource = new Map<string, ExplodedSplitUnit[]>();
     for (const unit of units) {
@@ -282,7 +329,7 @@ export default function SplitBillModal({
 
       const byGuest = new Map<number, ExplodedSplitUnit[]>();
       for (const unit of sourceUnits) {
-        const guest = assignments[unit.key];
+        const guest = guestOf(unit);
         if (!guest) continue;
         const list = byGuest.get(guest) ?? [];
         list.push(unit);
@@ -340,6 +387,11 @@ export default function SplitBillModal({
 
     return guestItemIds;
   };
+
+  const materializeByItemAssignments = (
+    units: ExplodedSplitUnit[],
+    staffId: string,
+  ) => materializeUnits(units, staffId, (unit) => assignments[unit.key]);
 
   const setGuestAmount = (index: number, raw: string) => {
     const n = parseFloat(raw);
@@ -400,8 +452,9 @@ export default function SplitBillModal({
         return false;
       }
     }
-    if ((mode === 'equal' || mode === 'amount') && splitCount > items.length) {
-      toast.error(`Use at most ${items.length} ways (${items.length} line items on the check)`);
+    const maxShares = Math.max(items.length, splitUnits.length);
+    if ((mode === 'equal' || mode === 'amount') && splitCount > maxShares) {
+      toast.error(`Use at most ${maxShares} ways (${maxShares} item units on the check)`);
       return false;
     }
     if (mode === 'amount' && Math.abs(amountDelta) > 0.02) {
@@ -413,30 +466,37 @@ export default function SplitBillModal({
 
   /**
    * Build guest → itemIds partition for unpaid bill checks (and pay).
-   * Amounts/methods are not required for print-split.
+   * Equal and By $ always send the on-screen amount so the check TOTAL matches.
    */
   const resolvePrintSplits = async (staffId: string): Promise<PrintSplitReceiptLine[] | null> => {
-    const lineItems = items.map((it) => ({ id: it.id, qty: it.qty, price: it.price }));
-    const allIds = lineItems.map((it) => it.id);
     let splits: PrintSplitReceiptLine[] = [];
 
-    if (mode === 'equal') {
-      const itemGroups = partitionItemsEvenly(lineItems, splitCount);
-      splits = itemGroups.map((ids, i) => ({
-        guestLabel: `Guest ${i + 1}`,
-        itemIds: ids,
-        tip: 0,
-      })).filter((s) => s.itemIds.length > 0);
-    } else if (mode === 'amount') {
-      const active = guestAmounts
-        .map((a, i) => ({ amount: Math.round(a * 100) / 100, guestIndex: i }))
-        .filter((x) => x.amount > 0);
-      const itemGroups = partitionItemsByAmounts(lineItems, active.map((x) => x.amount));
-      splits = active.map((row, idx) => ({
+    if (mode === 'equal' || mode === 'amount') {
+      const shares = mode === 'equal'
+        ? equalShares(total, splitCount)
+        : guestAmounts.map((amount) => Math.round(amount * 100) / 100);
+      const paying = shares
+        .map((amount, guestIndex) => ({ amount, guestIndex }))
+        .filter((row) => row.amount > 0);
+      if (paying.length < MIN_WAYS) {
+        toast.error(`Need at least ${MIN_WAYS} guests with an amount`);
+        return null;
+      }
+      let guestItemIds: Map<number, string[]>;
+      try {
+        const targets = mode === 'amount' ? paying.map((row) => row.amount) : null;
+        const guestOfUnit = assignUnitsToGuests(splitUnits, paying.length, targets);
+        guestItemIds = await materializeUnits(splitUnits, staffId, (unit) => guestOfUnit.get(unit.key));
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Could not split item quantities');
+        return null;
+      }
+      splits = paying.map((row, idx) => ({
         guestLabel: `Guest ${row.guestIndex + 1}`,
-        itemIds: itemGroups[idx] ?? [],
+        itemIds: [...new Set(guestItemIds.get(idx + 1) ?? [])],
+        amount: row.amount,
         tip: 0,
-      })).filter((s) => s.itemIds.length > 0);
+      })).filter((s) => s.itemIds.length > 0 && s.amount > 0);
     } else {
       const guestItemIds = await materializeByItemAssignments(splitUnits, staffId);
       splits = Array.from({ length: splitCount }).map((_, i) => {
@@ -455,12 +515,7 @@ export default function SplitBillModal({
     }
 
     const partitionedIds = splits.flatMap((s) => s.itemIds);
-    const expectedIds = mode === 'byitem' ? partitionedIds : allIds;
-    if (mode !== 'byitem' && !isValidItemPartition(expectedIds, splits.map((s) => s.itemIds))) {
-      toast.error('Each guest needs at least one item, and every item must be assigned once');
-      return null;
-    }
-    if (mode === 'byitem' && !isValidItemPartition(partitionedIds, splits.map((s) => s.itemIds))) {
+    if (!isValidItemPartition(partitionedIds, splits.map((s) => s.itemIds))) {
       toast.error('Each guest needs at least one item, and every item must be assigned once');
       return null;
     }
@@ -481,6 +536,7 @@ export default function SplitBillModal({
       const splits = await resolvePrintSplits(staffId);
       if (!splits) return;
 
+      // Same zone receipt printer as Confirm Split & Pay — unpaid guest checks only.
       const result = await receiptsApi.printSplit({
         tableId,
         staffId,
@@ -692,12 +748,15 @@ export default function SplitBillModal({
 
           {mode === 'equal' && (
             <div className="rounded-xl bg-muted/30 border border-border p-4 space-y-2 fade-in">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Per guest (incl. tax &amp; service)</span>
-                <span className="text-primary font-bold text-lg text-tabular">${perPerson.toFixed(2)}</span>
-              </div>
+              <p className="text-xs text-muted-foreground">Each guest check total (incl. tax &amp; service)</p>
+              {equalShares(total, splitCount).map((amt, i) => (
+                <div key={`equal-share-${i}`} className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Guest {i + 1}</span>
+                  <span className="text-primary font-bold text-tabular">${amt.toFixed(2)}</span>
+                </div>
+              ))}
               <p className="text-[10px] text-muted-foreground">
-                Assign each item to a guest. You can split into up to {items.length} ways on this check.
+                These amounts are printed on the bill checks. Up to {splitUnits.length} ways on this check.
               </p>
             </div>
           )}

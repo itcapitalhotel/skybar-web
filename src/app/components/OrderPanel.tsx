@@ -250,7 +250,7 @@ export default function OrderPanel({
         {minSpendGap > 0 && (
           <div className="flex items-center gap-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-400">
             <AlertTriangle size={11} />
-            <span>${minSpendGap.toFixed(0)} below ${table.minSpend} min spend</span>
+            <span>${minSpendGap.toFixed(2)} below ${Number(table.minSpend).toFixed(2)} min spend</span>
           </div>
         )}
       </div>
@@ -347,7 +347,7 @@ export default function OrderPanel({
                       </button>
                     </div>
                   ) : null}
-                  <span className="text-xs font-semibold text-foreground text-tabular">${(item.unitPrice * item.qty).toFixed(0)}</span>
+                  <span className="text-xs font-semibold text-foreground text-tabular">${(item.unitPrice * item.qty).toFixed(2)}</span>
                   {item.status !== 'Voided' && (
                     <button
                       onClick={() => {
