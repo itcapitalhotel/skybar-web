@@ -90,7 +90,9 @@ function formToPayload(form: ItemFormData): Partial<ApiMenuItem> | null {
 }
 
 export default function PostItemsPage() {
-  const canDelete = useAuthRole() === 'Admin';
+  const role = useAuthRole();
+  const canDelete = role === 'Admin';
+  const canManageCatalog = role === 'Admin' || role === 'Manager' || role === 'Supervisor';
   const [lockOpen, setLockOpen] = useState(false);
   const [items, setItems] = useState<ApiMenuItem[]>([]);
   const [categories, setCategories] = useState<MenuCategory[]>([]);
@@ -317,20 +319,24 @@ export default function PostItemsPage() {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <Link
-              href="/zone-management"
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-muted/50 border border-border text-xs text-muted-foreground hover:text-foreground transition-all"
-            >
-              <Layers size={13} />
-              Zones
-            </Link>
-            <Link
-              href="/menu-categories"
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-muted/50 border border-border text-xs text-muted-foreground hover:text-foreground transition-all"
-            >
-              <Tag size={13} />
-              Categories
-            </Link>
+            {canManageCatalog && (
+              <>
+                <Link
+                  href="/zone-management"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-muted/50 border border-border text-xs text-muted-foreground hover:text-foreground transition-all"
+                >
+                  <Layers size={13} />
+                  Zones
+                </Link>
+                <Link
+                  href="/menu-categories"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-muted/50 border border-border text-xs text-muted-foreground hover:text-foreground transition-all"
+                >
+                  <Tag size={13} />
+                  Categories
+                </Link>
+              </>
+            )}
             <button
               onClick={() => void fetchMenu()}
               disabled={loading}
@@ -550,13 +556,15 @@ export default function PostItemsPage() {
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-1.5">
                     <label className="text-xs font-medium text-muted-foreground">Category *</label>
-                    <button
-                      type="button"
-                      onClick={() => setQuickCategoryOpen((v) => !v)}
-                      className="text-[10px] font-semibold text-primary hover:text-primary/80"
-                    >
-                      {quickCategoryOpen ? 'Cancel new category' : '+ New category'}
-                    </button>
+                    {canManageCatalog && (
+                      <button
+                        type="button"
+                        onClick={() => setQuickCategoryOpen((v) => !v)}
+                        className="text-[10px] font-semibold text-primary hover:text-primary/80"
+                      >
+                        {quickCategoryOpen ? 'Cancel new category' : '+ New category'}
+                      </button>
+                    )}
                   </div>
                   {activeCategories.length === 0 && !quickCategoryOpen ? (
                     <p className="text-xs text-amber-400 mb-2">
@@ -567,7 +575,7 @@ export default function PostItemsPage() {
                       .
                     </p>
                   ) : null}
-                  {quickCategoryOpen && (
+                  {canManageCatalog && quickCategoryOpen && (
                     <div className="mb-3 p-3 rounded-xl border border-primary/25 bg-primary/5 space-y-3">
                       <p className="text-[10px] text-muted-foreground">
                         Enter a label and choose whether this category is food or drink.

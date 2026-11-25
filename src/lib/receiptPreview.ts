@@ -23,6 +23,7 @@ export interface ReceiptPreviewData {
   discountTotal?: number;
   discountFood?: number;
   discountDrink?: number;
+  discountItems?: number;
   total: number;
   tip?: number;
   method: PaymentMethod;
@@ -77,6 +78,7 @@ export function mapReceiptApiToPreview(raw: Record<string, unknown>): ReceiptPre
     discountTotal: num(raw.discountTotal ?? raw.discount_total) ?? 0,
     discountFood: num(raw.discountFood ?? raw.discount_food) ?? 0,
     discountDrink: num(raw.discountDrink ?? raw.discount_drink) ?? 0,
+    discountItems: num(raw.discountItems ?? raw.discount_items) ?? 0,
     total: num(raw.total) ?? 0,
     tip: num(raw.tip) ?? 0,
     method,

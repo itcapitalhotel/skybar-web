@@ -48,13 +48,30 @@ export default function LoginPage() {
   const submittingRef = useRef(false);
 
   useEffect(() => {
-    staffApi.list()
-      .then((list) => {
-        setStaffList(list);
-        registerStaffNames(Object.fromEntries(list.map((s) => [s.id, s.name])));
-      })
-      .catch(() => setStaffList([]))
-      .finally(() => setLoadingStaff(false));
+    let cancelled = false;
+    const load = () => {
+      staffApi.list()
+        .then((list) => {
+          if (cancelled) return;
+          setStaffList(Array.isArray(list) ? list : []);
+          registerStaffNames(Object.fromEntries((list ?? []).map((s) => [s.id, s.name])));
+        })
+        .catch(() => {
+          if (!cancelled) setStaffList((current) => current);
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingStaff(false);
+        });
+    };
+    load();
+    const onFocus = () => load();
+    window.addEventListener('focus', onFocus);
+    const timer = window.setInterval(load, 15000);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', onFocus);
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -67,57 +84,48 @@ export default function LoginPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const failPin = () => {
-    setError('Incorrect PIN. Ask a manager to reset it.');
+  const failPin = (message: string) => {
+    setError(message);
     setShake(true);
     setTimeout(() => { setShake(false); setPin(''); }, 600);
   };
 
   const tryLogin = async (staff: StaffUser, enteredPin: string) => {
     if (submittingRef.current || success) return;
+    if (!/^\d{4,6}$/.test(enteredPin)) {
+      failPin('Enter the full PIN (4 to 6 digits), then press Sign in.');
+      return;
+    }
     submittingRef.current = true;
     try {
-      try {
-        const pinResult = await staffApi.verifyPin(staff.id, { pin: enteredPin });
-        if (!(pinResult.success || pinResult.valid)) {
-          throw new Error(pinResult.message || 'Invalid PIN');
-        }
-        const loginResult = await authApi.login({
-          email: staff.email,
-          password: enteredPin,
-        });
-        saveSession(loginResult, staff);
-        setSuccess(true);
-        const home = (loginResult.user?.role ?? staff.role) === 'Finance' ? '/reports' : '/';
-        setTimeout(() => router.push(home), 800);
+      const pinResult = await staffApi.verifyPin(staff.id, { pin: enteredPin });
+      if (!(pinResult.success || pinResult.valid)) {
+        failPin(pinResult.message || 'Incorrect PIN. Ask a manager to reset it.');
         return;
-      } catch {
-        const loginResult = await authApi.login({
-          email: staff.email,
-          password: enteredPin,
-        });
-        saveSession(loginResult, staff);
-        setSuccess(true);
-        const home = (loginResult.user?.role ?? staff.role) === 'Finance' ? '/reports' : '/';
-        setTimeout(() => router.push(home), 800);
       }
-    } catch {
-      failPin();
+      const loginResult = await authApi.login({
+        email: staff.email,
+        password: enteredPin,
+      });
+      saveSession(loginResult, staff);
+      setSuccess(true);
+      const home = (loginResult.user?.role ?? staff.role) === 'Finance' ? '/reports' : '/';
+      setTimeout(() => router.push(home), 800);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      if (/invalid credentials|invalid pin/i.test(message)) {
+        failPin('Incorrect PIN. Ask a manager to reset it.');
+      } else if (/too many/i.test(message)) {
+        failPin('Too many tries. Wait a minute, then press Sign in.');
+      } else if (message) {
+        failPin(message);
+      } else {
+        failPin('Cannot reach the server. Wait a moment and press Sign in.');
+      }
     } finally {
       submittingRef.current = false;
     }
   };
-
-  useEffect(() => {
-    if (!selectedStaff || success || pin.length < 4) return;
-    // Wait after 4 or 5 digits so a longer PIN is not sent too early.
-    const delay = pin.length >= 6 ? 80 : 700;
-    const t = window.setTimeout(() => {
-      void tryLogin(selectedStaff, pin);
-    }, delay);
-    return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin, selectedStaff, success]);
 
   const handleSelectStaff = (staff: StaffUser) => {
     setSelectedStaff(staff);
@@ -226,7 +234,7 @@ export default function LoginPage() {
                 <Lock size={14} className="text-primary" />
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Enter PIN</h3>
-                  <p className="text-xs text-muted-foreground">4 to 6 digits, the same PIN saved on the account</p>
+                  <p className="text-xs text-muted-foreground">Enter all 4 to 6 digits, then press Sign in</p>
                 </div>
               </div>
 

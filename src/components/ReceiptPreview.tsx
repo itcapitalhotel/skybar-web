@@ -3,7 +3,7 @@
 import React from 'react';
 import type { ReceiptPaperWidth, ReceiptPreviewData } from '@/lib/receiptPreview';
 import { RECEIPT_PAPER_WIDTH_PX } from '@/lib/receiptPreview';
-import { formatMoney, lineTotal } from '@/lib/receiptMoney';
+import { formatChangeRiel, formatMoney, lineTotal } from '@/lib/receiptMoney';
 import type { PaymentMethod } from '@/lib/api/types';
 
 export interface ReceiptPreviewProps {
@@ -142,7 +142,13 @@ export default function ReceiptPreview({
                 <span className="tabular-nums">−{formatMoney(data.discountDrink ?? 0, currencySymbol)}</span>
               </div>
             ) : null}
-            {discount > 0 && !(data.discountTotal || data.discountFood || data.discountDrink) ? (
+            {(data.discountItems ?? 0) > 0 ? (
+              <div className="flex justify-between gap-2 text-emerald-700">
+                <span>Disc. Items</span>
+                <span className="tabular-nums">−{formatMoney(data.discountItems ?? 0, currencySymbol)}</span>
+              </div>
+            ) : null}
+            {discount > 0 && !(data.discountTotal || data.discountFood || data.discountDrink || data.discountItems) ? (
               <div className="flex justify-between gap-2 text-emerald-700">
                 <span>Discount</span>
                 <span className="tabular-nums">−{formatMoney(discount, currencySymbol)}</span>
@@ -175,6 +181,12 @@ export default function ReceiptPreview({
                   <span>Change</span>
                   <span className="tabular-nums">{formatMoney(change, currencySymbol)}</span>
                 </div>
+                {change > 0 ? (
+                  <div className="flex justify-between gap-2 font-semibold">
+                    <span>អាប់</span>
+                    <span className="tabular-nums">{formatChangeRiel(change)}</span>
+                  </div>
+                ) : null}
               </>
             ) : null}
             {data.method === 'room' && data.roomNumber ? (

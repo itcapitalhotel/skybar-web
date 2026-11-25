@@ -85,8 +85,15 @@ function mapItems(raw: unknown): OrderItem[] {
       qty: num(o.qty) ?? 1,
       unitPrice: num(o.unitPrice ?? o.unit_price) ?? 0,
       status: (o.status as OrderItem['status']) ?? 'Served',
-      notes: str(o.notes),
+      notes: str(o.notes ?? o.note),
       size: str(o.size),
+      menuItemId: str(o.menuItemId ?? o.menu_item_id),
+      categoryId: str(o.categoryId ?? o.category_id),
+      categoryType: (str(o.categoryType ?? o.category_type) as OrderItem['categoryType']) || undefined,
+      voidedByStaffId: str(o.voidedByStaffId ?? o.voided_by_staff_id),
+      voidedByStaffName: str(o.voidedByStaffName ?? o.voided_by_staff_name),
+      voidedAt: str(o.voidedAt ?? o.voided_at),
+      voidReason: str(o.voidReason ?? o.void_reason),
     };
   });
 }
@@ -177,6 +184,7 @@ function mapPayments(raw: unknown): OrderDetailsPayment[] | undefined {
     const time = closedAt ?? paidAt ?? str(p.time) ?? str(p.timestamp) ?? '';
     return {
       paymentId: String(p.paymentId ?? p.payment_id ?? p.id ?? ''),
+      type: str(p.type),
       guestLabel: str(
         p.guestLabel
           ?? p.guest_label
@@ -194,6 +202,28 @@ function mapPayments(raw: unknown): OrderDetailsPayment[] | undefined {
       cardName: str(p.cardName ?? p.card_name) ?? null,
       cardNumber: str(p.cardNumber ?? p.card_number) ?? null,
       tip: num(p.tip ?? p.tips) ?? null,
+      change: num(p.change ?? p.changeAmount ?? p.change_amount) ?? null,
+      cashTendered: num(p.cashTendered ?? p.cash_tendered) ?? null,
+      roomNumber: str(p.roomNumber ?? p.room_number) ?? null,
+      tenderGroupId: str(p.tenderGroupId ?? p.tender_group_id) ?? null,
+      tableId: str(p.tableId ?? p.table_id) ?? null,
+      zoneId: str(p.zoneId ?? p.zone_id) ?? null,
+      zoneLabel: str(p.zoneLabel ?? p.zone_label) ?? null,
+      covers: num(p.covers),
+      orderId: str(p.orderId ?? p.order_id) ?? null,
+      subtotal: num(p.subtotal) ?? null,
+      serviceCharge: num(p.serviceCharge ?? p.service_charge) ?? null,
+      vat: num(p.vat) ?? null,
+      discount: num(p.discount) ?? null,
+      discountTotal: num(p.discountTotal ?? p.discount_total) ?? null,
+      discountFood: num(p.discountFood ?? p.discount_food) ?? null,
+      discountDrink: num(p.discountDrink ?? p.discount_drink) ?? null,
+      discountItems: num(p.discountItems ?? p.discount_items) ?? null,
+      splitIndex: num(split?.splitIndex ?? split?.split_index) ?? null,
+      splitCount: num(split?.splitCount ?? split?.split_count) ?? null,
+      splitItemIds: Array.isArray(split?.itemIds ?? split?.item_ids)
+        ? ((split?.itemIds ?? split?.item_ids) as unknown[]).map((id) => String(id))
+        : null,
     };
   });
 }
@@ -213,6 +243,8 @@ export function normalizeOrderDetailResponse(raw: Record<string, unknown>): Anal
     shiftId: str(raw.shiftId ?? raw.shift_id),
     tableId: str(raw.tableId ?? raw.table_id) ?? '',
     tableLabel: str(raw.tableLabel ?? raw.table_label) ?? '',
+    status: str(raw.status),
+    itemCount: num(raw.itemCount ?? raw.item_count),
     zoneId: str(raw.zoneId ?? raw.zone_id),
     zoneLabel: str(raw.zoneLabel ?? raw.zone_label),
     orderTypeId: str(raw.orderTypeId ?? raw.order_type_id),
@@ -230,6 +262,7 @@ export function normalizeOrderDetailResponse(raw: Record<string, unknown>): Anal
     discountTotal: num(raw.discountTotal ?? raw.discount_total) ?? null,
     discountFood: num(raw.discountFood ?? raw.discount_food) ?? null,
     discountDrink: num(raw.discountDrink ?? raw.discount_drink) ?? null,
+    discountItems: num(raw.discountItems ?? raw.discount_items) ?? null,
     discountTotalPercent: num(raw.discountTotalPercent ?? raw.discount_total_percent) ?? null,
     discountFoodPercent: num(raw.discountFoodPercent ?? raw.discount_food_percent) ?? null,
     discountDrinkPercent: num(raw.discountDrinkPercent ?? raw.discount_drink_percent) ?? null,
@@ -368,6 +401,7 @@ export function mergeOrderDetailLayers(
     discountTotal: overlay.discountTotal ?? base.discountTotal ?? null,
     discountFood: overlay.discountFood ?? base.discountFood ?? null,
     discountDrink: overlay.discountDrink ?? base.discountDrink ?? null,
+    discountItems: overlay.discountItems ?? base.discountItems ?? null,
     discountTotalPercent: overlay.discountTotalPercent ?? base.discountTotalPercent ?? null,
     discountFoodPercent: overlay.discountFoodPercent ?? base.discountFoodPercent ?? null,
     discountDrinkPercent: overlay.discountDrinkPercent ?? base.discountDrinkPercent ?? null,

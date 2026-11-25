@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Loader2, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ordersApi, orderTypesApi } from '@/lib/api/client';
@@ -76,8 +76,8 @@ function formFromDetail(detail: OrderDetailsResponse, paymentId: string, note: s
     method: toMethod(payment?.method ?? detail.method),
     cardName: (payment?.cardName ?? detail.cardName ?? '').trim(),
     cardNumber: (payment?.cardNumber ?? detail.cardNumber ?? '').trim(),
-    cashTendered: moneyInput(detail.cashTendered),
-    roomNumber: (detail.roomNumber ?? '').trim(),
+    cashTendered: moneyInput(payment?.cashTendered ?? detail.cashTendered),
+    roomNumber: (payment?.roomNumber ?? detail.roomNumber ?? '').trim(),
     tip: moneyInput(payment?.tip ?? detail.tip),
     guestCount: detail.covers != null && detail.covers > 0 ? String(detail.covers) : '',
     orderTypeId: detail.orderTypeId ?? '',
@@ -91,6 +91,7 @@ function buildPatch(
   base: FormState,
   split: boolean,
   amount: number,
+  includeParty = true,
 ): UpdateClosedOrderRequest | 'empty' | string {
   const body: UpdateClosedOrderRequest = {};
   if (form.method !== base.method) body.method = form.method;
@@ -129,17 +130,19 @@ function buildPatch(
     body.tip = Math.round(n * 100) / 100;
   }
 
-  const partyError = applyPartyFields(form, base, body);
-  if (partyError) return partyError;
+  if (includeParty) {
+    const partyError = applyPartyFields(form, base, body);
+    if (partyError) return partyError;
 
-  const note = form.note.trim();
-  if (note && note !== base.note.trim()) body.note = note;
+    const note = form.note.trim();
+    if (note && note !== base.note.trim()) body.note = note;
 
-  if (form.closedAt.trim() !== base.closedAt.trim()) {
-    if (!form.closedAt.trim()) return 'Enter a closing time.';
-    const closed = new Date(form.closedAt);
-    if (Number.isNaN(closed.getTime())) return 'Closing time is not a valid date.';
-    body.closedAt = closed.toISOString();
+    if (form.closedAt.trim() !== base.closedAt.trim()) {
+      if (!form.closedAt.trim()) return 'Enter a closing time.';
+      const closed = new Date(form.closedAt);
+      if (Number.isNaN(closed.getTime())) return 'Closing time is not a valid date.';
+      body.closedAt = closed.toISOString();
+    }
   }
 
   const changed = Object.keys(body);
@@ -193,8 +196,8 @@ export default function ReopenOrderDialog({
   const [detail, setDetail] = useState<OrderDetailsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [form, setForm] = useState<FormState | null>(null);
-  const [baseline, setBaseline] = useState<FormState | null>(null);
+  const [forms, setForms] = useState<FormState[]>([]);
+  const [baselines, setBaselines] = useState<FormState[]>([]);
   const [saving, setSaving] = useState(false);
   const [reopening, setReopening] = useState(false);
   const [confirmReopen, setConfirmReopen] = useState(false);
@@ -220,10 +223,13 @@ export default function ReopenOrderDialog({
     ordersApi.getDetails(orderId)
       .then((loaded) => {
         if (cancelled) return;
-        const next = formFromDetail(loaded, paymentId, '');
+        const rows = loaded.payments?.length ? loaded.payments : [];
+        const next = rows.length
+          ? rows.map((payment) => formFromDetail(loaded, payment.paymentId, ''))
+          : [formFromDetail(loaded, paymentId, '')];
         setDetail(loaded);
-        setForm(next);
-        setBaseline(next);
+        setForms(next);
+        setBaselines(next.map((row) => ({ ...row })));
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -238,46 +244,41 @@ export default function ReopenOrderDialog({
   }, [orderId, paymentId]);
 
   const payments = detail?.payments ?? [];
-  const split = payments.length > 1;
-  const selected = useMemo(
-    () => payments.find((p) => p.paymentId === form?.paymentId) ?? payments[0],
-    [payments, form?.paymentId],
-  );
-  const amount = Number(selected?.amount ?? detail?.total ?? 0);
 
-  const patchField = (partial: Partial<FormState>) => {
-    setForm((current) => (current ? { ...current, ...partial } : current));
+  const patchPayment = (index: number, partial: Partial<FormState>) => {
+    setForms((current) => current.map((row, i) => (i === index ? { ...row, ...partial } : row)));
     setError('');
   };
 
-  const selectPayment = (nextPaymentId: string) => {
-    if (!detail) return;
-    const note = form?.note ?? '';
-    const guests = form?.guestCount ?? '';
-    const orderTypeId = form?.orderTypeId ?? '';
-    const next = formFromDetail(detail, nextPaymentId, note);
-    next.guestCount = guests || next.guestCount;
-    next.orderTypeId = orderTypeId || next.orderTypeId;
-    setForm(next);
-    setBaseline({ ...next, note: '', guestCount: formFromDetail(detail, nextPaymentId, '').guestCount });
+  const patchShared = (partial: Partial<FormState>) => {
+    setForms((current) => current.map((row) => ({ ...row, ...partial })));
     setError('');
   };
 
   const savePayment = async () => {
-    if (!form || !baseline || saving || reopening) return;
-    const patch = buildPatch(form, baseline, split, amount);
-    if (patch === 'empty') {
-      setError('Change a field before saving. Only the fields you edit are sent.');
-      return;
-    }
-    if (typeof patch === 'string') {
-      setError(patch);
-      return;
-    }
+    if (!forms.length || !baselines.length || saving || reopening) return;
     setSaving(true);
     setError('');
     try {
-      await ordersApi.updateClosed(orderId, patch);
+      let partySent = false;
+      let saved = 0;
+      for (let i = 0; i < forms.length; i += 1) {
+        const amount = Number(payments[i]?.amount ?? detail?.total ?? 0);
+        const patch = buildPatch(forms[i], baselines[i], forms.length > 1, amount, !partySent);
+        if (patch === 'empty') continue;
+        if (typeof patch === 'string') {
+          setError(patch);
+          setSaving(false);
+          return;
+        }
+        await ordersApi.updateClosed(orderId, patch);
+        if (patch.guestCount != null || patch.orderTypeId || patch.note || patch.closedAt) partySent = true;
+        saved += 1;
+      }
+      if (saved === 0) {
+        setError('Change a field before saving. Only the fields you edit are sent.');
+        return;
+      }
       toast.success(`Payment updated on ${tableLabel}. The order stays closed.`);
       onChanged();
       onClose();
@@ -289,6 +290,8 @@ export default function ReopenOrderDialog({
   };
 
   const reopenOrder = async () => {
+    const form = forms[0];
+    const baseline = baselines[0];
     if (!form || !baseline || reopening || saving) return;
     const party: UpdateClosedOrderRequest = {};
     const partyError = applyPartyFields(form, baseline, party);
@@ -342,132 +345,121 @@ export default function ReopenOrderDialog({
             </div>
           ) : loadError ? (
             <p className="text-sm text-rose-400">{loadError}</p>
-          ) : form ? (
+          ) : forms.length > 0 ? (
             <>
               <section className="space-y-3">
                 <div>
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Correct payment</h3>
                   <p className="text-xs text-muted-foreground mt-1">
-                    The order stays closed. The open shift moves the sale from the old method to the new one.
+                    The order stays closed. Every payment on this check is listed here.
                   </p>
                 </div>
 
-                {split ? (
-                  <label className="block space-y-1">
-                    <span className="text-xs text-muted-foreground">Split payment</span>
-                    <select
-                      className="field-input w-full"
-                      value={form.paymentId}
-                      onChange={(e) => selectPayment(e.target.value)}
-                    >
-                      {payments.map((payment, index) => (
-                        <option key={payment.paymentId} value={payment.paymentId}>
-                          {paymentLabel(payment, index)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
-
-                <label className="block space-y-1">
-                  <span className="text-xs text-muted-foreground">Method</span>
-                  <select
-                    className="field-input w-full"
-                    value={form.method}
-                    onChange={(e) => patchField({ method: e.target.value as PayMethod })}
-                  >
-                    {METHODS.map((method) => (
-                      <option key={method.value} value={method.value}>{method.label}</option>
-                    ))}
-                  </select>
-                </label>
-
-                {form.method === 'card' ? (
-                  <div className="grid grid-cols-2 gap-3">
-                    <label className="block space-y-1">
-                      <span className="text-xs text-muted-foreground">Card name</span>
-                      <input
-                        className="field-input w-full"
-                        value={form.cardName}
-                        onChange={(e) => patchField({ cardName: e.target.value })}
-                        placeholder="Visa"
-                      />
-                    </label>
-                    <label className="block space-y-1">
-                      <span className="text-xs text-muted-foreground">Card number</span>
-                      <input
-                        className="field-input w-full"
-                        value={form.cardNumber}
-                        onChange={(e) => patchField({ cardNumber: e.target.value })}
-                        placeholder="123456"
-                      />
-                    </label>
-                  </div>
-                ) : null}
-
-                {form.method === 'cash' ? (
-                  <label className="block space-y-1">
-                    <span className="text-xs text-muted-foreground">Cash received</span>
-                    <input
-                      className="field-input w-full"
-                      inputMode="decimal"
-                      value={form.cashTendered}
-                      onChange={(e) => patchField({ cashTendered: e.target.value })}
-                      placeholder={amount.toFixed(2)}
-                    />
-                  </label>
-                ) : null}
-
-                {form.method === 'room' ? (
-                  <label className="block space-y-1">
-                    <span className="text-xs text-muted-foreground">Room number</span>
-                    <input
-                      className="field-input w-full"
-                      value={form.roomNumber}
-                      onChange={(e) => patchField({ roomNumber: e.target.value })}
-                    />
-                  </label>
-                ) : null}
+                {forms.map((form, index) => {
+                  const amount = Number(payments[index]?.amount ?? detail?.total ?? 0);
+                  return (
+                    <div key={form.paymentId || index} className="rounded-xl border border-border bg-muted/10 p-3 space-y-3">
+                      <p className="text-xs font-semibold text-foreground">
+                        {payments[index] ? paymentLabel(payments[index], index) : `${form.method} · $${amount.toFixed(2)}`}
+                      </p>
+                      <label className="block space-y-1">
+                        <span className="text-xs text-muted-foreground">Method</span>
+                        <select
+                          className="field-input w-full"
+                          value={form.method}
+                          onChange={(e) => patchPayment(index, { method: e.target.value as PayMethod })}
+                        >
+                          {METHODS.map((method) => (
+                            <option key={method.value} value={method.value}>{method.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      {form.method === 'card' ? (
+                        <div className="grid grid-cols-2 gap-3">
+                          <label className="block space-y-1">
+                            <span className="text-xs text-muted-foreground">Card name</span>
+                            <input
+                              className="field-input w-full"
+                              value={form.cardName}
+                              onChange={(e) => patchPayment(index, { cardName: e.target.value })}
+                              placeholder="Visa"
+                            />
+                          </label>
+                          <label className="block space-y-1">
+                            <span className="text-xs text-muted-foreground">Card number</span>
+                            <input
+                              className="field-input w-full"
+                              value={form.cardNumber}
+                              onChange={(e) => patchPayment(index, { cardNumber: e.target.value })}
+                              placeholder="123456"
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                      {form.method === 'cash' ? (
+                        <label className="block space-y-1">
+                          <span className="text-xs text-muted-foreground">Cash received</span>
+                          <input
+                            className="field-input w-full"
+                            inputMode="decimal"
+                            value={form.cashTendered}
+                            onChange={(e) => patchPayment(index, { cashTendered: e.target.value })}
+                            placeholder={amount.toFixed(2)}
+                          />
+                        </label>
+                      ) : null}
+                      {form.method === 'room' ? (
+                        <label className="block space-y-1">
+                          <span className="text-xs text-muted-foreground">Room number</span>
+                          <input
+                            className="field-input w-full"
+                            value={form.roomNumber}
+                            onChange={(e) => patchPayment(index, { roomNumber: e.target.value })}
+                          />
+                        </label>
+                      ) : null}
+                      <label className="block space-y-1">
+                        <span className="text-xs text-muted-foreground">Tip</span>
+                        <input
+                          className="field-input w-full"
+                          inputMode="decimal"
+                          value={form.tip}
+                          onChange={(e) => patchPayment(index, { tip: e.target.value })}
+                        />
+                      </label>
+                    </div>
+                  );
+                })}
 
                 <div className="grid grid-cols-2 gap-3">
-                  <label className="block space-y-1">
-                    <span className="text-xs text-muted-foreground">Tip</span>
-                    <input
-                      className="field-input w-full"
-                      inputMode="decimal"
-                      value={form.tip}
-                      onChange={(e) => patchField({ tip: e.target.value })}
-                    />
-                  </label>
                   <label className="block space-y-1">
                     <span className="text-xs text-muted-foreground">Guests</span>
                     <input
                       className="field-input w-full"
                       inputMode="numeric"
-                      value={form.guestCount}
-                      onChange={(e) => patchField({ guestCount: e.target.value })}
+                      value={forms[0].guestCount}
+                      onChange={(e) => patchShared({ guestCount: e.target.value })}
+                    />
+                  </label>
+                  <label className="block space-y-1">
+                    <span className="text-xs text-muted-foreground">Closing time</span>
+                    <input
+                      type="datetime-local"
+                      className="field-input w-full"
+                      value={forms[0].closedAt}
+                      onChange={(e) => patchShared({ closedAt: e.target.value })}
                     />
                   </label>
                 </div>
 
                 <label className="block space-y-1">
-                  <span className="text-xs text-muted-foreground">Closing time</span>
-                  <input
-                    type="datetime-local"
-                    className="field-input w-full"
-                    value={form.closedAt}
-                    onChange={(e) => patchField({ closedAt: e.target.value })}
-                  />
-                </label>
-
-                <label className="block space-y-1">
                   <span className="text-xs text-muted-foreground">Order type</span>
                   <select
                     className="field-input w-full"
-                    value={form.orderTypeId}
-                    onChange={(e) => patchField({ orderTypeId: e.target.value })}
+                    value={forms[0].orderTypeId}
+                    onChange={(e) => patchShared({ orderTypeId: e.target.value })}
                   >
-                    {!form.orderTypeId ? <option value="">Choose a type</option> : null}
+                    {!forms[0].orderTypeId ? <option value="">Choose a type</option> : null}
                     {orderTypes.map((type) => (
                       <option key={type.id} value={type.id}>{type.name}</option>
                     ))}
@@ -478,8 +470,8 @@ export default function ReopenOrderDialog({
                   <span className="text-xs text-muted-foreground">Note</span>
                   <input
                     className="field-input w-full"
-                    value={form.note}
-                    onChange={(e) => patchField({ note: e.target.value })}
+                    value={forms[0].note}
+                    onChange={(e) => patchShared({ note: e.target.value })}
                     placeholder="Corrected method"
                   />
                 </label>

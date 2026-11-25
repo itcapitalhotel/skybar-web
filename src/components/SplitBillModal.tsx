@@ -1,11 +1,14 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { X, Users, SplitSquareHorizontal, Check, Minus, Plus, Printer } from 'lucide-react';
+import { X, Users, SplitSquareHorizontal, Check, Minus, Plus, Printer, ArrowLeftRight } from 'lucide-react';
 import { toast } from 'sonner';
-import { ordersApi, paymentsApi, receiptsApi } from '@/lib/api/client';
+import { ordersApi, paymentsApi, receiptsApi, tablesApi, zonesApi } from '@/lib/api/client';
 import { getAuthUser } from '@/lib/api/config';
-import type { PaymentMethod, PrintSplitReceiptLine, SplitPaymentLine } from '@/lib/api/types';
+import type { PaymentMethod, PaymentTender, PrintSplitReceiptLine, SplitPaymentLine, ZoneData } from '@/lib/api/types';
+import { findZone } from '@/lib/zoneResolve';
+import { formatChangeRiel } from '@/lib/receiptMoney';
+import type { TableData } from '@/lib/api/types';
 import {
   explodeItemsToUnits,
   isValidItemPartition,
@@ -37,9 +40,14 @@ interface SplitBillModalProps {
   onSplitComplete?: () => void;
   /** After unpaid split bill checks print (table → bill) — refresh floor, keep modal open */
   onBillCheckPrinted?: () => void;
+  /** Floor tables for “To table” item move */
+  tables?: TableData[];
+  zones?: ZoneData[];
+  /** After selected items move to another table. Receives the destination table id. */
+  onItemsMoved?: (targetTableId: string) => void;
 }
 
-type SplitMode = 'equal' | 'byitem' | 'amount';
+type SplitMode = 'equal' | 'byitem' | 'amount' | 'totable';
 
 const PAYMENT_METHODS: { id: PaymentMethod; label: string }[] = [
   { id: 'card', label: 'Card' },
@@ -223,16 +231,27 @@ export default function SplitBillModal({
   guestCount = 1,
   onSplitComplete,
   onBillCheckPrinted,
+  tables: tablesProp,
+  zones: zonesProp,
+  onItemsMoved,
 }: SplitBillModalProps) {
   const [mode, setMode] = useState<SplitMode>('equal');
   const [splitCount, setSplitCount] = useState(2);
   const [assignments, setAssignments] = useState<Record<string, number>>({});
   const [guestAmounts, setGuestAmounts] = useState<number[]>(() => equalShares(total, 2));
   const [guestMethods, setGuestMethods] = useState<PaymentMethod[]>(['card', 'card']);
+  const [guestExtras, setGuestExtras] = useState<PaymentMethod[][]>([[], []]);
+  const [guestCashIn, setGuestCashIn] = useState<string[]>(['', '']);
+  const [guestRooms, setGuestRooms] = useState<string[]>(['', '']);
+  const [guestPartAmounts, setGuestPartAmounts] = useState<Record<string, string>[]>([{}, {}]);
   const [guestCardNames, setGuestCardNames] = useState<CardBrand[]>(['Visa', 'Visa']);
   const [guestCardNumbers, setGuestCardNumbers] = useState<string[]>(['', '']);
   const [processing, setProcessing] = useState(false);
   const [printingCheck, setPrintingCheck] = useState(false);
+  const [moveItemIds, setMoveItemIds] = useState<Record<string, boolean>>({});
+  const [moveTargetId, setMoveTargetId] = useState<string | null>(null);
+  const [floorTables, setFloorTables] = useState<TableData[]>(tablesProp ?? []);
+  const [floorZones, setFloorZones] = useState<ZoneData[]>(zonesProp ?? []);
 
   const displayTable = tableLabel ?? tableId;
 
@@ -256,9 +275,47 @@ export default function SplitBillModal({
     setAssignments({});
     setGuestAmounts(equalShares(total, 2));
     setGuestMethods(['card', 'card']);
+    setGuestExtras([[], []]);
+    setGuestCashIn(['', '']);
+    setGuestRooms(['', '']);
+    setGuestPartAmounts([{}, {}]);
     setGuestCardNames(['Visa', 'Visa']);
     setGuestCardNumbers(['', '']);
+    setMoveItemIds({});
+    setMoveTargetId(null);
   }, [isOpen, total]);
+
+  useEffect(() => {
+    if (tablesProp && tablesProp.length > 0) setFloorTables(tablesProp);
+  }, [tablesProp]);
+
+  useEffect(() => {
+    if (zonesProp && zonesProp.length > 0) setFloorZones(zonesProp);
+  }, [zonesProp]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    if (!tablesProp?.length) {
+      tablesApi.list().then((list) => {
+        if (!cancelled) setFloorTables(list as TableData[]);
+      }).catch(() => { /* keep current */ });
+    }
+    if (!zonesProp?.length) {
+      zonesApi.list().then((list) => {
+        if (!cancelled) setFloorZones(list);
+      }).catch(() => { /* keep current */ });
+    }
+    return () => { cancelled = true; };
+  }, [isOpen, tablesProp, zonesProp]);
+
+  const moveDestinations = useMemo(
+    () => floorTables.filter((t) => t.id !== tableId && t.status !== 'reserved'),
+    [floorTables, tableId],
+  );
+
+  const selectedMoveCount = items.filter((it) => moveItemIds[it.id]).length;
+  const zoneLabel = (zoneId: string) => findZone(floorZones, zoneId)?.label || zoneId || 'Zone';
 
   const unitsSignature = useMemo(
     () => splitUnits.map((u) => u.key).join('|'),
@@ -279,6 +336,22 @@ export default function SplitBillModal({
     setGuestMethods(prev => {
       if (prev.length === splitCount) return prev;
       return Array.from({ length: splitCount }, (_, i) => prev[i] ?? 'card');
+    });
+    setGuestExtras(prev => {
+      if (prev.length === splitCount) return prev;
+      return Array.from({ length: splitCount }, (_, i) => prev[i] ?? []);
+    });
+    setGuestCashIn(prev => {
+      if (prev.length === splitCount) return prev;
+      return Array.from({ length: splitCount }, (_, i) => prev[i] ?? '');
+    });
+    setGuestRooms(prev => {
+      if (prev.length === splitCount) return prev;
+      return Array.from({ length: splitCount }, (_, i) => prev[i] ?? '');
+    });
+    setGuestPartAmounts(prev => {
+      if (prev.length === splitCount) return prev;
+      return Array.from({ length: splitCount }, (_, i) => prev[i] ?? {});
     });
     setGuestCardNames(prev => {
       if (prev.length === splitCount) return prev;
@@ -408,6 +481,132 @@ export default function SplitBillModal({
       next[index] = method;
       return next;
     });
+    setGuestExtras(prev => {
+      const next = [...prev];
+      next[index] = (next[index] ?? []).filter(m => m !== method);
+      return next;
+    });
+  };
+
+  const methodsFor = (index: number): PaymentMethod[] => {
+    const first = guestMethods[index] ?? 'card';
+    const rest = (guestExtras[index] ?? []).filter(m => m !== first);
+    return [first, ...rest];
+  };
+
+  const toggleGuestMethod = (index: number, method: PaymentMethod) => {
+    const current = methodsFor(index);
+    if (current.includes(method)) {
+      if (current.length === 1) return;
+      const next = current.filter(m => m !== method);
+      setGuestMethod(index, next[0]);
+      setGuestExtras(prev => {
+        const copy = [...prev];
+        copy[index] = next.slice(1);
+        return copy;
+      });
+      return;
+    }
+    if (current.length >= 4) {
+      toast.error('Use at most 4 payment methods');
+      return;
+    }
+    setGuestExtras(prev => {
+      const copy = [...prev];
+      copy[index] = [...(copy[index] ?? []), method];
+      return copy;
+    });
+  };
+
+  const guestPayFields = (index: number, amountDue: number): Partial<SplitPaymentLine> => {
+    const methods = methodsFor(index);
+    const mixed = methods.length > 1;
+    const explicit: Partial<Record<PaymentMethod, number>> = {};
+    if (mixed) {
+      for (const id of methods) {
+        const raw = (guestPartAmounts[index]?.[id] ?? '').trim();
+        if (raw !== '') explicit[id] = Math.round((parseFloat(raw) || 0) * 100) / 100;
+      }
+      if (methods.includes('cash') && explicit.cash == null) {
+        const handed = (guestCashIn[index] ?? '').trim();
+        if (handed !== '') {
+          const n = Math.round((parseFloat(handed) || 0) * 100) / 100;
+          const others = methods
+            .filter((id) => id !== 'cash')
+            .reduce((sum, id) => sum + (explicit[id] ?? 0), 0);
+          const remaining = Math.max(0, Math.round((amountDue - others) * 100) / 100);
+          const cashAmt = Math.round(Math.min(n, remaining) * 100) / 100;
+          const otherTyped = methods.some((id) => id !== 'cash' && explicit[id] != null);
+          if (cashAmt > 0 && (otherTyped || cashAmt < amountDue - 0.009)) {
+            explicit.cash = cashAmt;
+          }
+        }
+      }
+    }
+    const blanks = methods.filter((id) => explicit[id] == null);
+    const used = methods.reduce((sum, id) => sum + (explicit[id] ?? 0), 0);
+    const rest = Math.max(0, Math.round((amountDue - used) * 100) / 100);
+    const parts = methods.map((id) => {
+      if (!mixed) return { method: id, amount: amountDue };
+      if (explicit[id] != null) return { method: id, amount: explicit[id] as number };
+      if (blanks.length === 1) return { method: id, amount: rest };
+      return { method: id, amount: 0 };
+    });
+    const cashReceivedRaw = (guestCashIn[index] ?? '').trim();
+    const cashReceived = cashReceivedRaw === '' ? undefined : Math.round((parseFloat(cashReceivedRaw) || 0) * 100) / 100;
+    if (!mixed) {
+      const method = methods[0];
+      return {
+        method,
+        cashTendered: method === 'cash' ? (cashReceived ?? null) : null,
+        roomNumber: method === 'room' ? (guestRooms[index] ?? '').trim() || null : null,
+        cardName: method === 'card' ? (guestCardNames[index] ?? 'Visa') : null,
+        cardNumber: method === 'card' ? (guestCardNumbers[index] ?? '').trim() || null : null,
+      };
+    }
+    const tenders: PaymentTender[] = parts.map(p => ({
+      method: p.method,
+      amount: p.amount,
+      cashTendered: p.method === 'cash' ? (cashReceived ?? p.amount) : undefined,
+      roomNumber: p.method === 'room' ? (guestRooms[index] ?? '').trim() || undefined : undefined,
+      cardName: p.method === 'card' ? (guestCardNames[index] ?? 'Visa') : undefined,
+      cardNumber: p.method === 'card' ? (guestCardNumbers[index] ?? '').trim() || undefined : undefined,
+    }));
+    return { method: methods[0], tenders };
+  };
+
+  const guestPayError = (index: number, amountDue: number, label: string): string | null => {
+    const methods = methodsFor(index);
+    const fields = guestPayFields(index, amountDue);
+    if (methods.includes('card')) {
+      const number = fields.tenders
+        ? fields.tenders.find(t => t.method === 'card')?.cardNumber
+        : fields.cardNumber;
+      if (!number?.trim()) return `Enter transaction number for ${label}`;
+    }
+    if (methods.includes('room')) {
+      const room = fields.tenders
+        ? fields.tenders.find(t => t.method === 'room')?.roomNumber
+        : fields.roomNumber;
+      if (!room?.trim()) return `Enter a room number for ${label}`;
+    }
+    if (methods.length > 1) {
+      const parts = fields.tenders ?? [];
+      if (parts.some(t => (t.amount ?? 0) <= 0)) return `Each method for ${label} needs an amount`;
+      const sum = parts.reduce((s, t) => s + (t.amount ?? 0), 0);
+      if (Math.abs(sum - amountDue) > 0.02) return `${label} tenders must equal $${amountDue.toFixed(2)}`;
+    }
+    if (methods.includes('cash')) {
+      const raw = (guestCashIn[index] ?? '').trim();
+      if (raw !== '') {
+        const cashPortion = methods.length > 1
+          ? (fields.tenders?.find(t => t.method === 'cash')?.amount ?? 0)
+          : amountDue;
+        const received = parseFloat(raw) || 0;
+        if (received + 0.009 < cashPortion) return `Insufficient cash tendered for ${label}`;
+      }
+    }
+    return null;
   };
 
   const setGuestCardName = (index: number, brand: CardBrand) => {
@@ -426,14 +625,10 @@ export default function SplitBillModal({
     });
   };
 
-  const withCardFields = (line: SplitPaymentLine, guestIndex: number): SplitPaymentLine => {
-    if (line.method !== 'card') return line;
-    return {
-      ...line,
-      cardName: guestCardNames[guestIndex] ?? 'Visa',
-      cardNumber: (guestCardNumbers[guestIndex] ?? '').trim() || null,
-    };
-  };
+  const withCardFields = (line: SplitPaymentLine, guestIndex: number): SplitPaymentLine => ({
+    ...line,
+    ...guestPayFields(guestIndex, line.amount),
+  });
 
   /** Shared validation for print-check and pay (partition rules). */
   const validateSplitSetup = (): boolean => {
@@ -521,6 +716,45 @@ export default function SplitBillModal({
     }
 
     return splits;
+  };
+
+  const toggleMoveItem = (itemId: string) => {
+    setMoveItemIds((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
+  };
+
+  const handleMoveItems = async () => {
+    const itemIds = items.filter((it) => moveItemIds[it.id]).map((it) => it.id);
+    if (itemIds.length === 0) {
+      toast.error('Select at least one item to move');
+      return;
+    }
+    if (!moveTargetId) {
+      toast.error('Select a destination table');
+      return;
+    }
+    const staffId = getAuthUser()?.id;
+    if (!staffId) {
+      toast.error('Sign in again to move items');
+      return;
+    }
+    const dest = moveDestinations.find((t) => t.id === moveTargetId);
+    setProcessing(true);
+    try {
+      const result = await tablesApi.transfer({
+        sourceTableId: tableId,
+        targetTableId: moveTargetId,
+        staffId,
+        itemIds,
+      });
+      toast.success(result.message || `${itemIds.length} item${itemIds.length === 1 ? '' : 's'} moved to ${dest?.label ?? moveTargetId}`);
+      onItemsMoved?.(moveTargetId);
+      onSplitComplete?.();
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to move items');
+    } finally {
+      setProcessing(false);
+    }
   };
 
   const handlePrintBillCheck = async () => {
@@ -630,9 +864,11 @@ export default function SplitBillModal({
           return;
         }
 
-        const missingTxn = splits.find((s) => s.method === 'card' && !s.cardNumber?.trim());
-        if (missingTxn) {
-          toast.error(`Enter transaction number for ${missingTxn.guestLabel}`);
+        const payProblem = splits
+          .map((s) => guestPayError(parseInt(s.guestLabel.replace(/\D/g, ''), 10) - 1, s.amount, s.guestLabel))
+          .find((msg): msg is string => Boolean(msg));
+        if (payProblem) {
+          toast.error(payProblem);
           return;
         }
 
@@ -662,9 +898,11 @@ export default function SplitBillModal({
         return;
       }
 
-      const missingTxn = splits.find(s => s.method === 'card' && !s.cardNumber?.trim());
-      if (missingTxn) {
-        toast.error(`Enter transaction number for ${missingTxn.guestLabel}`);
+      const payProblem = splits
+        .map((s) => guestPayError(parseInt(s.guestLabel.replace(/\D/g, ''), 10) - 1, s.amount, s.guestLabel))
+        .find((msg): msg is string => Boolean(msg));
+      if (payProblem) {
+        toast.error(payProblem);
         return;
       }
 
@@ -696,6 +934,176 @@ export default function SplitBillModal({
     }
   };
 
+  const dueForGuest = (index: number): number => {
+    if (mode === 'amount') return Math.round((guestAmounts[index] ?? 0) * 100) / 100;
+    if (mode === 'equal') return equalShares(total, splitCount)[index] ?? 0;
+    const guestNum = index + 1;
+    const orderSub = splitUnits.reduce((sum, unit) => sum + unit.price, 0);
+    if (orderSub <= 0) return 0;
+    const guests = Array.from({ length: splitCount }, (_, i) => i + 1)
+      .filter((n) => splitUnits.some((unit) => assignments[unit.key] === n));
+    const amounts = guests.map((n) => {
+      const sub = splitUnits
+        .filter((unit) => assignments[unit.key] === n)
+        .reduce((sum, unit) => sum + unit.price, 0);
+      return Math.round((sub / orderSub) * total * 100) / 100;
+    });
+    const shareSum = amounts.reduce((sum, value) => sum + value, 0);
+    if (amounts.length > 0) {
+      amounts[amounts.length - 1] += Math.round((total - shareSum) * 100) / 100;
+    }
+    const pos = guests.indexOf(guestNum);
+    return pos >= 0 ? amounts[pos] : 0;
+  };
+
+  const renderGuestPay = (index: number, amountDue: number) => {
+    const methods = methodsFor(index);
+    const mixed = methods.length > 1;
+    const fields = guestPayFields(index, amountDue);
+    const cashPortion = methods.includes('cash')
+      ? (mixed ? (fields.tenders?.find((t) => t.method === 'cash')?.amount ?? 0) : amountDue)
+      : 0;
+    const cashRaw = (guestCashIn[index] ?? '').trim();
+    const cashReceived = cashRaw === '' ? cashPortion : (parseFloat(cashRaw) || 0);
+    const cashChange = Math.round((cashReceived - cashPortion) * 100) / 100;
+    return (
+      <div className="space-y-2">
+        <div className="flex flex-wrap gap-1.5">
+          {PAYMENT_METHODS.map((m) => {
+            const on = methods.includes(m.id);
+            return (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => toggleGuestMethod(index, m.id)}
+                className={`px-2.5 py-1.5 rounded-lg border text-[10px] font-semibold ${
+                  on
+                    ? 'bg-primary/15 border-primary/40 text-primary'
+                    : 'border-border text-muted-foreground hover:border-primary/40'
+                }`}
+              >
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          Amount due ${amountDue.toFixed(2)}
+          {mixed ? ' · enter how much cash, card, QR, or room pays' : ''}
+        </p>
+        {mixed && methods.filter((id) => id !== 'cash').map((id) => {
+          const part = fields.tenders?.find((t) => t.method === id);
+          const typed = (guestPartAmounts[index]?.[id] ?? '').trim();
+          const shown = typed !== ''
+            ? (guestPartAmounts[index]?.[id] ?? '')
+            : (part && (part.amount ?? 0) > 0 ? part.amount!.toFixed(2) : '');
+          return (
+            <div key={id} className="flex items-center gap-2">
+              <span className="text-[10px] text-muted-foreground w-12 capitalize">{id}</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min={0}
+                value={shown}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setGuestPartAmounts((prev) => {
+                    const next = [...prev];
+                    next[index] = { ...(next[index] ?? {}), [id]: value };
+                    return next;
+                  });
+                }}
+                className="h-8 w-28 rounded-lg border border-border bg-muted/20 px-2 text-xs text-tabular"
+                placeholder="0.00"
+              />
+            </div>
+          );
+        })}
+        {methods.includes('cash') && (
+          <div className="space-y-1">
+            {mixed && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground w-12">On bill</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min={0}
+                  value={(() => {
+                    const typed = (guestPartAmounts[index]?.cash ?? '').trim();
+                    if (typed !== '') return guestPartAmounts[index]?.cash ?? '';
+                    const part = fields.tenders?.find((t) => t.method === 'cash');
+                    return part && (part.amount ?? 0) > 0 ? part.amount!.toFixed(2) : '';
+                  })()}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setGuestPartAmounts((prev) => {
+                      const next = [...prev];
+                      next[index] = { ...(next[index] ?? {}), cash: value };
+                      return next;
+                    });
+                  }}
+                  className="h-8 w-28 rounded-lg border border-border bg-muted/20 px-2 text-xs text-tabular"
+                  placeholder="0.00"
+                />
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-muted-foreground w-12">Handed</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min={0}
+                value={guestCashIn[index] ?? ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setGuestCashIn((prev) => {
+                    const next = [...prev];
+                    next[index] = value;
+                    return next;
+                  });
+                }}
+                placeholder={cashPortion.toFixed(2)}
+                className="h-8 w-28 rounded-lg border border-border bg-muted/20 px-2 text-xs text-tabular"
+              />
+            </div>
+            <p className={`text-[11px] font-semibold ${cashChange < -0.009 ? 'text-rose-400' : 'text-emerald-400'}`}>
+              {cashChange < -0.009
+                ? `Short $${Math.abs(cashChange).toFixed(2)}`
+                : `Give the guest $${cashChange.toFixed(2)} · អាប់ ${formatChangeRiel(cashChange)}`}
+            </p>
+          </div>
+        )}
+        {methods.includes('card') && (
+          <GuestCardFields
+            cardName={guestCardNames[index] ?? 'Visa'}
+            cardNumber={guestCardNumbers[index] ?? ''}
+            onCardNameChange={(brand) => setGuestCardName(index, brand)}
+            onCardNumberChange={(value) => setGuestCardNumber(index, value)}
+          />
+        )}
+        {methods.includes('room') && (
+          <input
+            type="text"
+            value={guestRooms[index] ?? ''}
+            onChange={(e) => {
+              const value = e.target.value;
+              setGuestRooms((prev) => {
+                const next = [...prev];
+                next[index] = value;
+                return next;
+              });
+            }}
+            placeholder="Room number"
+            className="w-full h-9 rounded-xl border border-border bg-muted/20 px-3 text-sm"
+          />
+        )}
+      </div>
+    );
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -719,11 +1127,12 @@ export default function SplitBillModal({
         </div>
 
         <div className="flex-1 overflow-y-auto scrollbar-thin p-5 space-y-5">
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-4 gap-2">
             {([
               { id: 'equal' as const, label: 'Equal', icon: Users },
               { id: 'amount' as const, label: 'By $', icon: SplitSquareHorizontal },
               { id: 'byitem' as const, label: 'By item', icon: SplitSquareHorizontal },
+              { id: 'totable' as const, label: 'To table', icon: ArrowLeftRight },
             ]).map(({ id, label, icon: Icon }) => (
               <button
                 key={`split-mode-${id}`}
@@ -739,12 +1148,14 @@ export default function SplitBillModal({
             ))}
           </div>
 
+          {mode !== 'totable' && (
           <div>
             <p className="text-xs text-muted-foreground font-medium mb-2">
               {mode === 'byitem' ? 'Number of guests' : 'Number of ways'}
             </p>
             <SplitCountField value={splitCount} onChange={setSplitCount} />
           </div>
+          )}
 
           {mode === 'equal' && (
             <div className="rounded-xl bg-muted/30 border border-border p-4 space-y-2 fade-in">
@@ -785,24 +1196,8 @@ export default function SplitBillModal({
                         className="w-full h-9 pl-7 pr-3 rounded-xl border border-border bg-muted/20 text-sm font-semibold text-tabular focus:outline-none focus:border-primary/50"
                       />
                     </div>
-                    <select
-                      value={guestMethods[i] ?? 'card'}
-                      onChange={e => setGuestMethod(i, e.target.value as PaymentMethod)}
-                      className="h-9 rounded-xl border border-border bg-muted/20 text-xs px-2"
-                    >
-                      {PAYMENT_METHODS.map(m => (
-                        <option key={m.id} value={m.id}>{m.label}</option>
-                      ))}
-                    </select>
                   </div>
-                  {(guestMethods[i] ?? 'card') === 'card' && (
-                    <GuestCardFields
-                      cardName={guestCardNames[i] ?? 'Visa'}
-                      cardNumber={guestCardNumbers[i] ?? ''}
-                      onCardNameChange={brand => setGuestCardName(i, brand)}
-                      onCardNumberChange={value => setGuestCardNumber(i, value)}
-                    />
-                  )}
+                  {renderGuestPay(i, Math.round((amt || 0) * 100) / 100)}
                 </div>
               ))}
               <button
@@ -850,31 +1245,87 @@ export default function SplitBillModal({
             </div>
           )}
 
+          {mode === 'totable' && (
+            <div className="space-y-4 fade-in">
+              <div>
+                <p className="text-xs text-muted-foreground font-medium mb-2">
+                  Items to move
+                  {selectedMoveCount > 0 ? ` · ${selectedMoveCount} selected` : ''}
+                </p>
+                <p className="text-[10px] text-muted-foreground mb-2">
+                  Tap items to send them to another table. The rest stay on this check.
+                </p>
+                <div className="space-y-2">
+                  {items.map((it) => {
+                    const on = !!moveItemIds[it.id];
+                    return (
+                      <button
+                        key={`move-${it.id}`}
+                        type="button"
+                        onClick={() => toggleMoveItem(it.id)}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
+                          on
+                            ? 'bg-primary/15 border-primary/40'
+                            : 'bg-muted/20 border-border hover:bg-muted/30'
+                        }`}
+                      >
+                        <div className="min-w-0 mr-3">
+                          <p className="text-sm text-foreground font-medium truncate">
+                            {it.qty}× {it.name}
+                            {it.size ? ` · ${it.size}` : ''}
+                          </p>
+                          <p className="text-xs text-muted-foreground text-tabular">
+                            ${(it.price * it.qty).toFixed(2)}
+                          </p>
+                        </div>
+                        <span className={`text-xs font-semibold ${on ? 'text-primary' : 'text-muted-foreground'}`}>
+                          {on ? 'Move' : 'Stay'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground font-medium mb-2">Destination table</p>
+                {moveDestinations.length === 0 ? (
+                  <p className="text-xs text-amber-400">No other tables available</p>
+                ) : (
+                  <div className="max-h-44 overflow-y-auto space-y-2">
+                    {moveDestinations.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setMoveTargetId(t.id)}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
+                          moveTargetId === t.id
+                            ? 'bg-primary/15 border-primary/40 text-primary'
+                            : 'border-border text-foreground hover:bg-muted/30'
+                        }`}
+                      >
+                        <div>
+                          <p className="text-sm font-semibold">{t.label}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {zoneLabel(t.zone)} · {t.status}
+                            {t.orderTotal > 0 ? ` · $${Number(t.orderTotal).toFixed(2)}` : ''}
+                          </p>
+                        </div>
+                        {moveTargetId === t.id && <Check size={16} className="text-primary flex-shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {(mode === 'equal' || mode === 'byitem') && (
             <div className="space-y-3">
               <p className="text-xs text-muted-foreground font-medium">Payment method per guest</p>
               {Array.from({ length: splitCount }).map((_, i) => (
                 <div key={`guest-method-${i}`} className="rounded-xl border border-border bg-muted/10 p-3 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground w-14">Guest {i + 1}</span>
-                    <select
-                      value={guestMethods[i] ?? 'card'}
-                      onChange={e => setGuestMethod(i, e.target.value as PaymentMethod)}
-                      className="flex-1 h-9 rounded-xl border border-border bg-muted/20 text-xs px-2"
-                    >
-                      {PAYMENT_METHODS.map(m => (
-                        <option key={m.id} value={m.id}>{m.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  {(guestMethods[i] ?? 'card') === 'card' && (
-                    <GuestCardFields
-                      cardName={guestCardNames[i] ?? 'Visa'}
-                      cardNumber={guestCardNumbers[i] ?? ''}
-                      onCardNameChange={brand => setGuestCardName(i, brand)}
-                      onCardNumberChange={value => setGuestCardNumber(i, value)}
-                    />
-                  )}
+                  <span className="text-xs text-muted-foreground">Guest {i + 1}</span>
+                  {renderGuestPay(i, dueForGuest(i))}
                 </div>
               ))}
             </div>
@@ -882,6 +1333,23 @@ export default function SplitBillModal({
         </div>
 
         <div className="p-5 border-t border-border space-y-2">
+          {mode === 'totable' ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void handleMoveItems()}
+                disabled={processing || selectedMoveCount === 0 || !moveTargetId}
+                className="w-full btn-primary rounded-xl py-3 font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <ArrowLeftRight size={16} />
+                {processing ? 'Moving…' : 'Move items'}
+              </button>
+              <p className="text-[10px] text-muted-foreground text-center leading-relaxed">
+                Selected items go to the other table. Remaining items stay on this check.
+              </p>
+            </>
+          ) : (
+            <>
           <button
             type="button"
             onClick={() => void handlePrintBillCheck()}
@@ -903,6 +1371,8 @@ export default function SplitBillModal({
           <p className="text-[10px] text-muted-foreground text-center leading-relaxed">
             Print unpaid checks for guests first, then collect payment when ready.
           </p>
+            </>
+          )}
         </div>
       </div>
     </div>

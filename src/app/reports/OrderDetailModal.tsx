@@ -6,6 +6,7 @@ import {
   Loader2, AlertCircle, Receipt, BedDouble, Banknote, Info,
 } from 'lucide-react';
 import { analyticsApi, ordersApi, paymentsApi } from '@/lib/api/client';
+import { formatChangeRiel } from '@/lib/receiptMoney';
 import { mergeOrderDetailLayers, normalizeOrderDetailResponse } from '@/lib/api/paymentDetailMapper';
 import type {
   AnalyticsTransactionDetail,
@@ -27,7 +28,7 @@ function fmtWhen(iso?: string): string {
   if (!iso) return '—';
   if (!iso.includes('T') && !iso.includes('-')) return iso;
   try {
-    return new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+    return new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'medium' });
   } catch {
     return iso;
   }
@@ -220,18 +221,22 @@ export default function OrderDetailModal({
   const payments = txn?.payments ?? [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-hidden />
-      <div className="relative w-full max-w-lg max-h-[90vh] bg-card border border-border rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+      <div className="relative w-full max-w-6xl max-h-[94vh] bg-card border border-border rounded-2xl shadow-2xl flex flex-col overflow-hidden">
         <div className="px-5 py-4 border-b border-border flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-start gap-3 min-w-0">
             <div className="w-9 h-9 rounded-lg bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
               <Eye size={16} className="text-primary" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-sm font-bold text-foreground truncate">Order / Payment Detail</h2>
-              <p className="text-xs text-muted-foreground font-mono truncate">
-                {txn?.tableLabel ?? tableLabel ?? '—'} · {paymentId.slice(0, 8)}…
+              <h2 className="text-base font-bold text-foreground">Order / Payment Detail</h2>
+              <p className="text-sm text-muted-foreground break-words">
+                {txn?.tableLabel ?? tableLabel ?? '—'}
+                {txn?.orderId ? ` · Order ${txn.orderId}` : ''}
+              </p>
+              <p className="text-xs text-muted-foreground font-mono break-all">
+                Payment {paymentId}
               </p>
               {(showMergeHistory || showSplitHistory || showTransferHistory) && (
                 <div className="flex flex-wrap gap-1 mt-1">
@@ -263,7 +268,7 @@ export default function OrderDetailModal({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-xs">
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm">
           {loading && (
             <div className="flex flex-col items-center justify-center py-12 gap-2 text-muted-foreground">
               <Loader2 size={22} className="animate-spin text-primary" />
@@ -295,8 +300,14 @@ export default function OrderDetailModal({
 
           {!loading && !error && txn && (
             <>
-              <section className="grid grid-cols-2 gap-2">
-                <InfoChip icon={<CreditCard size={12} />} label="Payment" value={`${paymentMethodLabel(txn)} · $${displayTotal.toFixed(2)}`} />
+              <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2">
+                <InfoChip
+                  icon={<CreditCard size={12} />}
+                  label="Payment"
+                  value={payments.length > 1
+                    ? payments.map((p) => `${p.method}${cardDetailSuffix(p.cardName, p.cardNumber)} $${Number(p.amount).toFixed(2)}`).join(' · ')
+                    : `${paymentMethodLabel(txn)} · $${displayTotal.toFixed(2)}`}
+                />
                 <InfoChip icon={<Clock size={12} />} label="Closed at" value={fmtWhen(txn.closedAt ?? txn.time)} />
                 <InfoChip
                   icon={<Users size={12} />}
@@ -321,6 +332,9 @@ export default function OrderDetailModal({
                   />
                 ) : null}
                 <InfoChip icon={<MapPin size={12} />} label="Table" value={txn.tableLabel || tableLabel || '—'} />
+                {txn.status ? (
+                  <InfoChip icon={<Receipt size={12} />} label="Status" value={txn.status} />
+                ) : null}
                 {txn.zoneLabel && (
                   <InfoChip icon={<MapPin size={12} />} label="Zone" value={txn.zoneLabel} />
                 )}
@@ -337,19 +351,19 @@ export default function OrderDetailModal({
                 {txn.shiftId && (
                   <InfoChip icon={<Receipt size={12} />} label="Shift" value={txn.shiftId} />
                 )}
-                {txn.cashTendered != null && txn.cashTendered > 0 && (
+                {payments.length <= 1 && txn.cashTendered != null && txn.cashTendered > 0 && (
                   <InfoChip icon={<Banknote size={12} />} label="Cash tendered" value={`$${txn.cashTendered.toFixed(2)}`} />
                 )}
-                {txn.changeAmount != null && txn.changeAmount > 0 && (
-                  <InfoChip icon={<Banknote size={12} />} label="Change" value={`$${txn.changeAmount.toFixed(2)}`} />
+                {payments.length <= 1 && txn.changeAmount != null && txn.changeAmount > 0 && (
+                  <InfoChip icon={<Banknote size={12} />} label="Change" value={`$${txn.changeAmount.toFixed(2)} · ${formatChangeRiel(txn.changeAmount)}`} />
                 )}
-                {txn.roomNumber && (
+                {payments.length <= 1 && txn.roomNumber && (
                   <InfoChip icon={<BedDouble size={12} />} label="Room" value={txn.roomNumber} />
                 )}
-                {txn.cardName?.trim() && (
+                {payments.length <= 1 && txn.cardName?.trim() && (
                   <InfoChip icon={<CreditCard size={12} />} label="Card" value={txn.cardName.trim()} />
                 )}
-                {txn.cardNumber?.trim() && (
+                {payments.length <= 1 && txn.cardNumber?.trim() && (
                   <InfoChip icon={<CreditCard size={12} />} label="Txn #" value={txn.cardNumber.trim()} />
                 )}
               </section>
@@ -369,6 +383,8 @@ export default function OrderDetailModal({
                 <section className="rounded-xl border border-border bg-muted/10 p-3 space-y-1">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Totals</p>
                   <Line label="Subtotal" value={txn.subtotal} />
+                  {(txn.foodSubtotal ?? 0) > 0 && <Line label="Food" value={txn.foodSubtotal} />}
+                  {(txn.drinkSubtotal ?? 0) > 0 && <Line label="Drink" value={txn.drinkSubtotal} />}
                   <Line label="Service charge" value={txn.serviceCharge} />
                   <Line label="VAT" value={txn.vat} />
                   {(txn.discountTotal ?? 0) > 0 && <Line label="Discount total" value={-(txn.discountTotal ?? 0)} />}
@@ -383,36 +399,77 @@ export default function OrderDetailModal({
                   {(txn.discountDrinkPercentAmount ?? 0) > 0 && (
                     <Line label={`Discount drink ${txn.discountDrinkPercent ?? 0}%`} value={-(txn.discountDrinkPercentAmount ?? 0)} />
                   )}
+                  {(txn.discountItems ?? 0) > 0 && <Line label="Disc. Items" value={-(txn.discountItems ?? 0)} />}
                   {(txn.discount ?? 0) > 0
-                    && !(txn.discountTotal || txn.discountFood || txn.discountDrink)
+                    && !(txn.discountTotal || txn.discountFood || txn.discountDrink || txn.discountItems)
                     && <Line label="Discount" value={-(txn.discount ?? 0)} />}
                   <Line label="Total" value={displayTotal} bold />
                   {(txn.tip ?? 0) > 0 && <Line label="Tip" value={txn.tip} />}
                 </section>
               )}
 
-              {payments.length > 0 && !(showSplitHistory && splitSessions.some(s => (s.paymentIds?.length ?? 0) > 0)) && (
-                <section className="rounded-xl border border-border bg-muted/10 p-3 space-y-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Payments</p>
-                  {payments.map((p) => (
-                    <div key={p.paymentId} className="flex flex-wrap justify-between gap-x-2 gap-y-0.5 py-1 border-b border-border/40 last:border-0">
-                      <span className="font-medium text-foreground">
-                        {p.method}{cardDetailSuffix(p.cardName, p.cardNumber)}
-                      </span>
-                      <span className="text-muted-foreground" title={p.paidAt && p.closedAt && p.paidAt !== p.closedAt ? `Paid ${fmtWhen(p.paidAt)}` : undefined}>
-                        {fmtWhen(p.closedAt ?? p.time)}
-                      </span>
-                      <span className="font-semibold tabular-nums ml-auto">${p.amount.toFixed(2)}</span>
-                      {(p.tip ?? 0) > 0 && (
-                        <span className="w-full text-[10px] text-muted-foreground">Tip ${Number(p.tip).toFixed(2)}</span>
-                      )}
-                      {p.staffName && (
-                        <span className="w-full text-[10px] text-muted-foreground">
-                          {p.staffName}{p.staffRole ? ` · ${p.staffRole}` : ''}
-                        </span>
-                      )}
-                    </div>
-                  ))}
+              {payments.length > 0 && (
+                <section className="rounded-xl border border-border bg-muted/10 p-3 space-y-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Payments ({payments.length})
+                  </p>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    {payments.map((p, index) => (
+                      <div key={p.paymentId || index} className="rounded-lg border border-border bg-background/50 p-3 space-y-1">
+                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+                          <span className="font-semibold text-foreground break-words">
+                            {p.guestLabel ? `${p.guestLabel} · ` : `Payment ${index + 1} · `}
+                            {p.method}{cardDetailSuffix(p.cardName, p.cardNumber)}
+                          </span>
+                          <span className="font-bold tabular-nums">${Number(p.amount).toFixed(2)}</span>
+                        </div>
+                        <DetailRow label="Payment id" value={p.paymentId} mono />
+                        <DetailRow label="Time" value={fmtWhen(p.closedAt ?? p.paidAt ?? p.time)} />
+                        {p.type ? <DetailRow label="Type" value={p.type} /> : null}
+                        {p.cardName?.trim() ? <DetailRow label="Card" value={p.cardName.trim()} /> : null}
+                        {p.cardNumber?.trim() ? <DetailRow label="Card number" value={p.cardNumber.trim()} mono /> : null}
+                        {p.roomNumber ? <DetailRow label="Room" value={p.roomNumber} /> : null}
+                        {(p.cashTendered ?? 0) > 0 ? (
+                          <DetailRow label="Cash handed" value={`$${Number(p.cashTendered).toFixed(2)}`} />
+                        ) : null}
+                        {(p.change ?? 0) > 0 ? (
+                          <DetailRow
+                            label="Change"
+                            value={`$${Number(p.change).toFixed(2)} · ${formatChangeRiel(Number(p.change))}`}
+                          />
+                        ) : null}
+                        {(p.tip ?? 0) > 0 ? <DetailRow label="Tip" value={`$${Number(p.tip).toFixed(2)}`} /> : null}
+                        {p.subtotal != null ? <DetailRow label="Subtotal" value={money(p.subtotal)} /> : null}
+                        {p.serviceCharge != null ? <DetailRow label="Service charge" value={money(p.serviceCharge)} /> : null}
+                        {p.vat != null ? <DetailRow label="VAT" value={money(p.vat)} /> : null}
+                        {(p.discountTotal ?? 0) > 0 ? <DetailRow label="Discount total" value={money(-(p.discountTotal ?? 0))} /> : null}
+                        {(p.discountFood ?? 0) > 0 ? <DetailRow label="Discount food" value={money(-(p.discountFood ?? 0))} /> : null}
+                        {(p.discountDrink ?? 0) > 0 ? <DetailRow label="Discount drink" value={money(-(p.discountDrink ?? 0))} /> : null}
+                        {(p.discountItems ?? 0) > 0 ? <DetailRow label="Disc. Items" value={money(-(p.discountItems ?? 0))} /> : null}
+                        {(p.discount ?? 0) > 0
+                          && !(p.discountTotal || p.discountFood || p.discountDrink || p.discountItems)
+                          ? <DetailRow label="Discount" value={money(-(p.discount ?? 0))} />
+                          : null}
+                        {p.splitCount ? (
+                          <DetailRow label="Split" value={`${(p.splitIndex ?? 0) + 1} of ${p.splitCount}`} />
+                        ) : null}
+                        {p.splitItemIds?.length ? (
+                          <DetailRow label="Split item ids" value={p.splitItemIds.join(', ')} mono />
+                        ) : null}
+                        {(p.staffName || p.staffId) ? (
+                          <DetailRow
+                            label="Staff"
+                            value={[p.staffName, p.staffRole, p.staffId].filter(Boolean).join(' · ')}
+                          />
+                        ) : null}
+                        {p.tenderGroupId ? <DetailRow label="Tender group" value={p.tenderGroupId} mono /> : null}
+                        {p.orderId ? <DetailRow label="Order" value={p.orderId} mono /> : null}
+                        {(p.zoneLabel || p.tableId) ? (
+                          <DetailRow label="Place" value={[p.zoneLabel, p.tableId].filter(Boolean).join(' · ')} />
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
                 </section>
               )}
 
@@ -459,7 +516,6 @@ export default function OrderDetailModal({
                     <SplitSessionRow
                       key={`split-sess-${i}-${s.time ?? i}`}
                       session={s}
-                      currentPaymentId={paymentId}
                       payments={payments}
                       legacyParts={legacySplitParts}
                     />
@@ -480,28 +536,70 @@ export default function OrderDetailModal({
 
               {items.length > 0 ? (
                 <section>
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Line items</p>
-                  <div className="rounded-xl border border-border divide-y divide-border/50 overflow-hidden">
-                    {items.map((it) => (
-                      <div key={it.id} className="flex justify-between gap-2 px-3 py-2">
-                        <span className="text-foreground">
-                          {it.qty}× {it.name}
-                          {it.status && it.status !== 'Served' && (
-                            <span className="text-muted-foreground ml-1">({it.status})</span>
-                          )}
-                        </span>
-                        <span className="font-medium tabular-nums">${(it.qty * it.unitPrice).toFixed(2)}</span>
-                      </div>
-                    ))}
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                    Line items ({items.length})
+                  </p>
+                  <div className="rounded-xl border border-border overflow-x-auto">
+                    <table className="w-full min-w-[42rem] text-sm">
+                      <thead className="bg-muted/30 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 font-semibold">Qty</th>
+                          <th className="px-3 py-2 font-semibold">Item</th>
+                          <th className="px-3 py-2 font-semibold">Size</th>
+                          <th className="px-3 py-2 font-semibold">Note</th>
+                          <th className="px-3 py-2 font-semibold text-right">Unit</th>
+                          <th className="px-3 py-2 font-semibold text-right">Amount</th>
+                          <th className="px-3 py-2 font-semibold">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/50">
+                        {items.map((it) => (
+                          <tr key={it.id}>
+                            <td className="px-3 py-2 tabular-nums align-top">{it.qty}</td>
+                            <td className="px-3 py-2 align-top break-words">
+                              <p className="font-medium text-foreground">{it.name}</p>
+                              {it.categoryType ? (
+                                <p className="text-xs text-muted-foreground capitalize">{it.categoryType}</p>
+                              ) : null}
+                              <p className="text-[11px] text-muted-foreground font-mono break-all">Line {it.id}</p>
+                              {it.menuItemId ? (
+                                <p className="text-[11px] text-muted-foreground font-mono break-all">Menu {it.menuItemId}</p>
+                              ) : null}
+                              {(it.voidReason || it.voidedByStaffName || it.voidedAt) ? (
+                                <p className="text-xs text-rose-400 break-words">
+                                  Void{it.voidReason ? `: ${it.voidReason}` : ''}
+                                  {it.voidedByStaffName ? ` · ${it.voidedByStaffName}` : ''}
+                                  {it.voidedAt ? ` · ${fmtWhen(it.voidedAt)}` : ''}
+                                </p>
+                              ) : null}
+                            </td>
+                            <td className="px-3 py-2 align-top break-words">{it.size?.trim() || '—'}</td>
+                            <td className="px-3 py-2 align-top break-words">{it.notes?.trim() || '—'}</td>
+                            <td className="px-3 py-2 text-right tabular-nums align-top">${Number(it.unitPrice).toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-semibold tabular-nums align-top">
+                              ${(it.qty * it.unitPrice).toFixed(2)}
+                            </td>
+                            <td className="px-3 py-2 align-top">{it.status || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </section>
               ) : !txn.legacyPayment ? (
-                <p className="text-[10px] text-muted-foreground italic">No line items on this record.</p>
+                <p className="text-sm text-muted-foreground italic">No line items on this record.</p>
               ) : null}
 
-              {txn.orderId && (
-                <p className="text-[10px] text-muted-foreground font-mono">Order: {txn.orderId}</p>
-              )}
+              <section className="rounded-xl border border-border bg-muted/10 p-3 space-y-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Record ids</p>
+                {txn.orderId ? <DetailRow label="Order" value={txn.orderId} mono /> : null}
+                <DetailRow label="Payment" value={paymentId} mono />
+                {txn.tableId ? <DetailRow label="Table id" value={txn.tableId} mono /> : null}
+                {txn.tableSessionId ? <DetailRow label="Table session" value={txn.tableSessionId} mono /> : null}
+                {txn.shiftId ? <DetailRow label="Shift" value={txn.shiftId} mono /> : null}
+                {txn.zoneId ? <DetailRow label="Zone id" value={txn.zoneId} mono /> : null}
+                {txn.orderTypeId ? <DetailRow label="Order type id" value={txn.orderTypeId} mono /> : null}
+              </section>
             </>
           )}
         </div>
@@ -578,12 +676,10 @@ function formatPayMethod(method?: string): string {
 
 function SplitSessionRow({
   session,
-  currentPaymentId,
   payments,
   legacyParts,
 }: {
   session: OrderSplitSession;
-  currentPaymentId: string;
   payments: OrderDetailsPayment[];
   legacyParts?: AnalyticsTransactionSplitPart[] | null;
 }) {
@@ -614,24 +710,16 @@ function SplitSessionRow({
               pay?.cardNumber ?? legacy?.cardNumber,
             );
             const amount = pay?.amount ?? legacy?.amount;
-            const isCurrent = id === currentPaymentId;
             return (
               <li
                 key={id}
                 title={id}
-                className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-2 py-1.5 text-sm ${
-                  isCurrent ? 'bg-cyan-500/10 border border-cyan-500/25' : 'bg-muted/20 border border-transparent'
-                }`}
+                className="flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-2 py-1.5 text-sm bg-muted/20 border border-transparent"
               >
                 <span className="font-medium text-foreground min-w-[4.5rem]">{guest}</span>
                 <span className="text-muted-foreground">{method}{cardBits}</span>
                 {amount != null && (
                   <span className="font-semibold tabular-nums ml-auto">${Number(amount).toFixed(2)}</span>
-                )}
-                {isCurrent && (
-                  <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-cyan-400">
-                    This payment
-                  </span>
                 )}
               </li>
             );
@@ -670,7 +758,22 @@ function InfoChip({ icon, label, value }: { icon: React.ReactNode; label: string
   return (
     <div className="rounded-lg border border-border bg-muted/10 px-2.5 py-2">
       <p className="flex items-center gap-1 text-[10px] text-muted-foreground mb-0.5">{icon}{label}</p>
-      <p className="text-foreground font-medium truncate" title={value}>{value}</p>
+      <p className="text-foreground font-medium break-words">{value}</p>
+    </div>
+  );
+}
+
+function money(value: number): string {
+  const n = Number(value);
+  const sign = n < 0 ? '-' : '';
+  return `${sign}$${Math.abs(n).toFixed(2)}`;
+}
+
+function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={`text-foreground text-right break-all ${mono ? 'font-mono text-xs' : ''}`}>{value}</span>
     </div>
   );
 }

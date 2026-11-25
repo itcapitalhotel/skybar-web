@@ -236,7 +236,7 @@ const API_SECTIONS: Section[] = [
         method: 'POST',
         path: '/api/tables/transfer',
         description:
-          'Move an open check to an empty table (floor map Change table). Source must have an active order; target must have no active order — otherwise 400 (use merge if both occupied). Optional itemIds[] for partial transfer; omit or [] = whole check. Persists table_transfer_events.',
+          'Move a check or selected items. Omit itemIds (or send []) to move the whole check; the destination must be empty. Send itemIds to move only those lines — the rest stay, and the destination may already be occupied. Persists table_transfer_events.',
         requestBody: `{
   "sourceTableId": "table-v1",
   "targetTableId": "table-v5",

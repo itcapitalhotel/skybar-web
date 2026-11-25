@@ -185,7 +185,7 @@ export default function VoidReportPage() {
             <h2 className="text-sm font-semibold text-foreground">
               Cancelled items — {filtered.length}
             </h2>
-            <span className="text-xs text-muted-foreground">{dateRange.from} – {dateRange.to}</span>
+            <span className="text-xs text-muted-foreground">{dateRange.from} – {dateRange.to} · 5:00 AM–5:00 AM</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">

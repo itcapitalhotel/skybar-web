@@ -1241,7 +1241,18 @@ export default function FloorMapClient() {
             tableId={selectedTable.id}
             tableLabel={selectedTable.label}
             guestCount={Math.max(1, selectedTable.guests ?? 1)}
+            tables={tables}
+            zones={zoneCatalog}
             onSplitComplete={() => void handleSplitComplete()}
+            onItemsMoved={(targetId) => {
+              void (async () => {
+                await Promise.all([
+                  fetchTables(),
+                  fetchOrderForTable(selectedTable.id),
+                  fetchOrderForTable(targetId),
+                ]);
+              })();
+            }}
             onBillCheckPrinted={() => {
               void fetchTables({ silent: true });
               if (selectedTable) void fetchOrderForTable(selectedTable.id);

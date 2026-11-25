@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Delete, Space, ArrowBigUp, X } from 'lucide-react';
 
 export type VirtualKeyboardMode = 'numeric' | 'pin' | 'text' | 'email';
@@ -83,21 +83,36 @@ export default function VirtualKeyboard({
 }: VirtualKeyboardProps) {
   const [shifted, setShifted] = useState(false);
   const isNumeric = mode === 'numeric' || mode === 'pin';
+  // Fast taps arrive before React re-renders. Keep the latest string here so
+  // the next key is appended to the full PIN, not the previous render.
+  const valueRef = useRef(value);
+  if (value !== valueRef.current) {
+    const parentStillCatchingUp =
+      value.length > 0 && valueRef.current.startsWith(value) && value.length < valueRef.current.length;
+    if (!parentStillCatchingUp) valueRef.current = value;
+  }
+
+  const publish = (next: string) => {
+    valueRef.current = next;
+    onChange(next);
+  };
 
   const append = (ch: string) => {
     if (disabled) return;
-    const next = `${value}${ch}`;
-    onChange(maxLength != null ? next.slice(0, maxLength) : next);
+    const current = valueRef.current;
+    const next = maxLength != null ? `${current}${ch}`.slice(0, maxLength) : `${current}${ch}`;
+    if (next === current) return;
+    publish(next);
   };
 
   const backspace = () => {
     if (disabled) return;
-    onChange(value.slice(0, -1));
+    publish(valueRef.current.slice(0, -1));
   };
 
   const clear = () => {
     if (disabled) return;
-    onChange('');
+    publish('');
   };
 
   // Hardware keyboard still works when a Bluetooth keyboard is plugged in

@@ -13,7 +13,8 @@ import SkyBarShopReport from '@/app/reports/SkyBarShopReport';
 import { buildMenuCategoryLookup, buildShopReportCsv } from '@/app/reports/reportDocumentHelpers';
 import DateRangePicker, { todayRange } from '@/components/DateRangePicker';
 import { toast } from 'sonner';
-import { analyticsApi, configApi, menuApi, menuCategoryApi, tablesApi, zonesApi } from '@/lib/api/client';
+import { analyticsApi, configApi, menuApi, menuCategoryApi, ordersApi, tablesApi, zonesApi } from '@/lib/api/client';
+import { checkKey } from '@/app/reports/reportDocumentHelpers';
 import type { MenuCategoryLookup, ReportGridRow } from '@/app/reports/reportDocumentHelpers';
 import {
   ensureStaffNameCache,
@@ -27,6 +28,8 @@ import type {
   AnalyticsStaffPerformance,
   AnalyticsTransaction,
   AnalyticsTransactionDetail,
+  OrderDetailsPayment,
+  PaymentBreakdown,
   TableData,
   ZoneData,
 } from '@/lib/api/types';
@@ -56,6 +59,10 @@ interface OrderReportRow {
   drinkSubtotal?: number;
   cardName?: string | null;
   cardNumber?: string | null;
+  cashTendered?: number | null;
+  changeAmount?: number | null;
+  roomNumber?: string | null;
+  tenderGroupId?: string | null;
 }
 
 type SortKey = 'name' | 'revenue' | 'orders' | 'covers';
@@ -125,7 +132,46 @@ function normalizeOrderRow(tx: AnalyticsTransaction): OrderReportRow {
     drinkSubtotal: Number.isFinite(drinkSubtotal) ? drinkSubtotal : undefined,
     cardName: (tx.cardName ?? raw.card_name ?? null) as string | null,
     cardNumber: (tx.cardNumber ?? raw.card_number ?? null) as string | null,
+    cashTendered: numOrNull(raw.cashTendered ?? raw.cash_tendered ?? tx.cashTendered),
+    changeAmount: numOrNull(raw.changeAmount ?? raw.change_amount ?? tx.changeAmount),
+    roomNumber: (tx.roomNumber ?? raw.room_number ?? null) as string | null,
+    tenderGroupId: (tx.tenderGroupId ?? raw.tender_group_id ?? null) as string | null,
   };
+}
+
+function numOrNull(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function mergeTenders(
+  existing: OrderDetailsPayment[] | undefined,
+  rows: AnalyticsTransaction[],
+): OrderDetailsPayment[] {
+  const merged = [...(existing ?? [])];
+  const seen = new Set(merged.map((payment) => payment.paymentId).filter(Boolean));
+  for (const tx of rows) {
+    const paymentId = tx.paymentId || tx.id;
+    if (!paymentId || seen.has(paymentId)) continue;
+    seen.add(paymentId);
+    merged.push({
+      paymentId,
+      method: tx.method,
+      amount: Number(tx.amount ?? 0),
+      time: tx.closedAt || tx.time || '',
+      staffId: tx.staffId,
+      staffName: tx.staffName,
+      cardName: tx.cardName,
+      cardNumber: tx.cardNumber,
+      cashTendered: tx.cashTendered,
+      change: tx.changeAmount,
+      roomNumber: tx.roomNumber,
+      tenderGroupId: tx.tenderGroupId,
+      orderId: tx.orderId,
+    });
+  }
+  return merged;
 }
 
 export default function ReportsPage() {
@@ -144,6 +190,7 @@ export default function ReportsPage() {
   const [staffRows, setStaffRows] = useState<StaffReportRow[]>([]);
   const [orderRows, setOrderRows] = useState<OrderReportRow[]>([]);
   const [orderDetails, setOrderDetails] = useState<AnalyticsTransactionDetail[]>([]);
+  const [paymentBreakdown, setPaymentBreakdown] = useState<PaymentBreakdown[]>([]);
   const [menuLookup, setMenuLookup] = useState<MenuCategoryLookup | undefined>(undefined);
   const [reportGeneratedAt, setReportGeneratedAt] = useState<number | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -160,7 +207,11 @@ export default function ReportsPage() {
     try {
       await ensureStaffNameCache({ force: true });
       const params = { range: 'custom' as const, from: dateFrom, to: dateTo };
-      const analytics = await analyticsApi.summary(params);
+      const [analytics, breakdown] = await Promise.all([
+        analyticsApi.summary(params),
+        analyticsApi.paymentBreakdown(params).catch(() => [] as PaymentBreakdown[]),
+      ]);
+      setPaymentBreakdown(breakdown);
       const perf = analytics.staffPerformance ?? [];
       registerStaffNames(
         Object.fromEntries(
@@ -188,7 +239,26 @@ export default function ReportsPage() {
             .filter(([id, n]) => Boolean(id) && !isPlaceholderStaffLabel(n)),
         ),
       );
-      const orders = transactions.map(normalizeOrderRow);
+      const groups = new Map<string, AnalyticsTransaction[]>();
+      for (const tx of transactions) {
+        const key = checkKey({
+          orderId: tx.orderId,
+          paymentId: tx.paymentId || tx.id,
+          tenderGroupId: tx.tenderGroupId,
+        });
+        const bucket = groups.get(key) ?? [];
+        bucket.push(tx);
+        groups.set(key, bucket);
+      }
+      const orders = Array.from(groups.values()).map((rows) => {
+        const primary = normalizeOrderRow(rows[0]);
+        const amount = rows.reduce((sum, tx) => sum + Number(tx.amount ?? 0), 0);
+        return {
+          ...primary,
+          amount,
+          method: rows.map((tx) => tx.method).filter(Boolean).join(' + ') || primary.method,
+        };
+      });
       setStaffRows(perf.map(staffRow));
       setOrderRows(orders);
       setReportGeneratedAt(Date.now());
@@ -212,8 +282,24 @@ export default function ReportsPage() {
 
       const details = await Promise.all(
         orders.map(async (o) => {
+          const siblings = groups.get(checkKey({
+            orderId: o.orderId,
+            paymentId: o.paymentId,
+            tenderGroupId: o.tenderGroupId,
+          })) ?? [];
           try {
-            const detail = await analyticsApi.getTransaction(o.paymentId);
+            let detail: AnalyticsTransactionDetail;
+            try {
+              detail = await analyticsApi.getTransaction(o.paymentId);
+            } catch (err) {
+              if (!o.orderId) throw err;
+              detail = await ordersApi.getDetails(o.orderId) as unknown as AnalyticsTransactionDetail;
+            }
+            const withTenders = {
+              ...detail,
+              paymentId: detail.paymentId || o.paymentId,
+              payments: mergeTenders(detail.payments, siblings),
+            };
             const raw = detail as unknown as Record<string, unknown>;
             const zoneLabel = resolveZoneFromFields(
               {
@@ -227,7 +313,7 @@ export default function ReportsPage() {
               zones,
             ).zone;
             return {
-              ...detail,
+              ...withTenders,
               orderId: detail.orderId || o.orderId,
               zoneLabel: zoneLabel !== 'Other' ? zoneLabel : detail.zoneLabel || zoneLabel,
             };
@@ -257,6 +343,7 @@ export default function ReportsPage() {
               cardName: o.cardName,
               cardNumber: o.cardNumber,
               items: [],
+              payments: mergeTenders(undefined, siblings),
             } satisfies AnalyticsTransactionDetail;
           }
         }),
@@ -268,6 +355,7 @@ export default function ReportsPage() {
       setStaffRows([]);
       setOrderRows([]);
       setOrderDetails([]);
+      setPaymentBreakdown([]);
       setMenuLookup(undefined);
       setLoadingDetails(false);
     } finally {
@@ -339,6 +427,7 @@ export default function ReportsPage() {
       dateTo,
       new Date(reportGeneratedAt ?? Date.now()),
       menuLookup,
+      paymentBreakdown,
     );
     const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -485,6 +574,7 @@ export default function ReportsPage() {
           dateTo={dateTo}
           generatedAt={reportGeneratedAt}
           orderDetails={filteredOrderDetails}
+          paymentBreakdown={paymentBreakdown}
           menuLookup={menuLookup}
           loading={loading || loadingDetails}
           onViewOrder={(paymentId) => {
@@ -501,7 +591,7 @@ export default function ReportsPage() {
               <Receipt size={14} className="text-primary" />
               Staff Performance — {filteredStaff.length} {filteredStaff.length === 1 ? 'staff' : 'staff'}
             </h2>
-            <span className="text-xs text-muted-foreground">{formatDate(dateFrom)} – {formatDate(dateTo)}</span>
+            <span className="text-xs text-muted-foreground">{formatDate(dateFrom)} – {formatDate(dateTo)} · 5:00 AM–5:00 AM</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">

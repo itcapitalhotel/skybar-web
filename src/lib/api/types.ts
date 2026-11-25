@@ -334,6 +334,10 @@ export interface OrderItem {
   menuItemId?: string;
   categoryId?: string;
   categoryType?: MenuCategoryType;
+  voidedByStaffId?: string;
+  voidedByStaffName?: string;
+  voidedAt?: string;
+  voidReason?: string;
 }
 
 export interface OrderType {
@@ -565,6 +569,11 @@ export interface ProcessPaymentRequest {
   foodSubtotal?: number;
   drinkSubtotal?: number;
   cashTendered?: number | null;
+  /**
+   * Mixed tenders on one check (2–4 methods). Amounts must sum to the amount due.
+   * Cash may send cashTendered greater than amount so the API returns change.
+   */
+  tenders?: PaymentTender[] | null;
   roomNumber?: string | null;
   /** Guest tip — stored separately, not included in total */
   tip?: number | null;
@@ -580,9 +589,31 @@ export interface ProcessPaymentRequest {
   discountFoodPercent?: number | null;
   /** Percent off the drink subtotal (0–100). */
   discountDrinkPercent?: number | null;
+  /** Per-line discounts (By item). Combined with total / food / drink. */
+  itemDiscounts?: ItemDiscountLine[] | null;
   /** User id of staff processing payment (e.g. u2) — required for reports */
   staffId?: string;
   cashierId?: string;
+}
+
+export interface PaymentTender {
+  method: PaymentMethod;
+  /** Portion of the bill paid with this method */
+  amount: number;
+  /** Cash handed over (cash only). Change = cashTendered − amount. */
+  cashTendered?: number | null;
+  roomNumber?: string | null;
+  cardName?: string | null;
+  cardNumber?: string | null;
+}
+
+/** One line for By-item discount on POST /api/payments. */
+export interface ItemDiscountLine {
+  itemId: string;
+  /** Fixed $ off this line */
+  amount?: number | null;
+  /** Percent off this line subtotal (0–100) */
+  percent?: number | null;
 }
 
 export interface ProcessPaymentResponse {
@@ -639,6 +670,7 @@ export interface PrintReceiptRequest {
   discountTotalPercent?: number | null;
   discountFoodPercent?: number | null;
   discountDrinkPercent?: number | null;
+  itemDiscounts?: ItemDiscountLine[] | null;
   cashTendered?: number | null;
   roomNumber?: string | null;
   cardName?: string | null;
@@ -720,6 +752,8 @@ export interface SplitPaymentLine {
   cardName?: string | null;
   /** Terminal / approval transaction reference when method is card */
   cardNumber?: string | null;
+  /** 2–4 methods for this guest. Omit when the guest uses one method. */
+  tenders?: PaymentTender[] | null;
   /** Guest tip for this split — not included in amount */
   tip?: number | null;
   discount?: number;
@@ -744,6 +778,11 @@ export interface SplitPaymentResponse {
     closedAt?: string;
     cardName?: string | null;
     cardNumber?: string | null;
+    cashTendered?: number | null;
+    change?: number | null;
+    tip?: number | null;
+    receiptPrinted?: boolean;
+    receiptPrintMessage?: string;
   }>;
 }
 
@@ -849,6 +888,10 @@ export interface PaymentBreakdown {
   name: string;
   value: number;
   color?: string;
+  /** cash | card | qr | room */
+  method?: string;
+  /** Visa / Amex / Master / Union when method is card */
+  cardName?: string | null;
 }
 
 export interface HourlyZoneRevenue {
@@ -1008,6 +1051,11 @@ export interface AnalyticsTransaction {
   drinkSubtotal?: number;
   cardName?: string | null;
   cardNumber?: string | null;
+  cashTendered?: number | null;
+  changeAmount?: number | null;
+  roomNumber?: string | null;
+  tenderGroupId?: string | null;
+  splitGroupId?: string | null;
 }
 
 export interface AnalyticsTransactionSplitPart {
@@ -1080,6 +1128,8 @@ export interface AnalyticsTransactionDetail {
   shiftId?: string;
   tableId: string;
   tableLabel: string;
+  status?: string;
+  itemCount?: number;
   zoneId?: string;
   zoneLabel?: string;
   orderTypeId?: string;
@@ -1095,6 +1145,7 @@ export interface AnalyticsTransactionDetail {
   discountTotal?: number | null;
   discountFood?: number | null;
   discountDrink?: number | null;
+  discountItems?: number | null;
   discountTotalPercent?: number | null;
   discountFoodPercent?: number | null;
   discountDrinkPercent?: number | null;
@@ -1145,6 +1196,7 @@ export interface AnalyticsTransactionDetail {
 
 export interface OrderDetailsPayment {
   paymentId: string;
+  type?: string;
   guestLabel?: string;
   method: string;
   amount: number;
@@ -1158,6 +1210,26 @@ export interface OrderDetailsPayment {
   cardName?: string | null;
   cardNumber?: string | null;
   tip?: number | null;
+  change?: number | null;
+  cashTendered?: number | null;
+  roomNumber?: string | null;
+  tenderGroupId?: string | null;
+  tableId?: string | null;
+  zoneId?: string | null;
+  zoneLabel?: string | null;
+  covers?: number | null;
+  orderId?: string | null;
+  subtotal?: number | null;
+  serviceCharge?: number | null;
+  vat?: number | null;
+  discount?: number | null;
+  discountTotal?: number | null;
+  discountFood?: number | null;
+  discountDrink?: number | null;
+  discountItems?: number | null;
+  splitIndex?: number | null;
+  splitCount?: number | null;
+  splitItemIds?: string[] | null;
 }
 
 export interface OrderDetailsResponse {

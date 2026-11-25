@@ -139,23 +139,29 @@ function toApiGranularity(g: RevenueGranularity): AnalyticsQueryParams['granular
   }
 }
 
-/** YYYY-MM-DD in a venue IANA timezone */
+/** YYYY-MM-DD business date in a venue timezone. Before 5:00 AM it is still the previous night. */
 function venueDateString(timezone: string, date = new Date()): string {
-  try {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: timezone || DEFAULT_TIMEZONE,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(date);
-  } catch {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: DEFAULT_TIMEZONE,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(date);
+  const tz = timezone || DEFAULT_TIMEZONE;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const read = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? '0');
+  let year = read('year');
+  let month = read('month');
+  let day = read('day');
+  if (read('hour') < 5) {
+    const previous = new Date(Date.UTC(year, month - 1, day));
+    previous.setUTCDate(previous.getUTCDate() - 1);
+    year = previous.getUTCFullYear();
+    month = previous.getUTCMonth() + 1;
+    day = previous.getUTCDate();
   }
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 function addCalendarDays(ymd: string, delta: number): string {
@@ -399,6 +405,8 @@ function colorizePayments(rows: PaymentBreakdown[] | undefined): PaymentBreakdow
       name: String(p.name || 'Other'),
       value: Number(p.value) || 0,
       color: p.color || PAYMENT_COLORS[i % PAYMENT_COLORS.length],
+      method: p.method,
+      cardName: p.cardName ?? null,
     }))
     .sort((a, b) => b.value - a.value);
 }

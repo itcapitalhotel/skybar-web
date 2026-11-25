@@ -6,10 +6,10 @@ export const PUBLIC_PATHS = new Set(['/login']);
 export const NAV_TABS = [
   { label: 'Floor Map', href: '/', roles: ['Admin', 'Manager', 'Supervisor', 'Service', 'Bartender', 'Cashier'] as UserRole[] },
   { label: 'Split & Merge Bill', href: '/shift-cash-split-bill', roles: ['Admin', 'Manager', 'Supervisor', 'Service', 'Cashier'] as UserRole[] },
-  { label: 'Reports', href: '/reports', roles: ['Admin', 'Manager', 'Supervisor', 'Finance'] as UserRole[] },
-  { label: 'Void report', href: '/void-report', roles: ['Admin', 'Manager', 'Supervisor', 'Finance', 'Service'] as UserRole[] },
+  { label: 'Reports', href: '/reports', roles: ['Admin', 'Manager', 'Supervisor', 'Finance', 'Cashier'] as UserRole[] },
+  { label: 'Void report', href: '/void-report', roles: ['Admin', 'Manager', 'Supervisor', 'Finance', 'Service', 'Cashier'] as UserRole[] },
   { label: 'Table Bookings', href: '/table-bookings', roles: ['Admin', 'Manager', 'Supervisor', 'Service', 'Bartender', 'Cashier'] as UserRole[] },
-  { label: 'Post Items', href: '/post-items', roles: ['Admin', 'Manager', 'Supervisor'] as UserRole[] },
+  { label: 'Post Items', href: '/post-items', roles: ['Admin', 'Manager', 'Supervisor', 'Cashier'] as UserRole[] },
   { label: 'Staff', href: '/staff-management', roles: ['Admin'] as UserRole[] },
   { label: 'Analytics', href: '/analytics', roles: ['Admin', 'Manager', 'Supervisor', 'Finance'] as UserRole[] },
   { label: 'Admin Config', href: '/admin-config', roles: ['Admin'] as UserRole[] },

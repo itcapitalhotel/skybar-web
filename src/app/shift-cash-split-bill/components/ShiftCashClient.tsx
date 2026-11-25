@@ -323,7 +323,9 @@ export default function ShiftCashClient() {
           total={splitTotal}
           tableId={splitTable.id}
           tableLabel={splitTable.label}
+          tables={floorTables}
           onSplitComplete={() => void loadFloor()}
+          onItemsMoved={() => void loadFloor()}
           onBillCheckPrinted={() => void loadFloor()}
         />
       )}

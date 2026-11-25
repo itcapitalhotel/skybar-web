@@ -335,7 +335,14 @@ export default function DateRangePicker({ value, onChange, className = '' }: Dat
   );
 }
 
+/** Business date: before 5:00 AM still belongs to the previous evening. */
+export function businessDateString(date = new Date()): string {
+  const shifted = new Date(date);
+  if (shifted.getHours() < 5) shifted.setDate(shifted.getDate() - 1);
+  return localDateString(shifted);
+}
+
 export function todayRange(): DateRangeValue {
-  const t = localDateString();
+  const t = businessDateString();
   return { from: t, to: t };
 }

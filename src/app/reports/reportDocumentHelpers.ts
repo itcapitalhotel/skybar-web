@@ -194,7 +194,7 @@ export function aggregateSalesByCategoryType(
   let food = 0;
   let drink = 0;
 
-  for (const d of details) {
+  for (const d of uniqueChecks(details)) {
     const fromPayment = paymentLevelCategorySales(d);
     if (fromPayment.food > 0 || fromPayment.drink > 0) {
       food += fromPayment.food;
@@ -217,7 +217,7 @@ export function aggregateFinancials(details: AnalyticsTransactionDetail[]): Fina
   let discount = 0;
   let billTotal = 0;
   let grandTotal = 0;
-  for (const d of details) {
+  for (const d of uniqueChecks(details)) {
     const raw = d as unknown as Record<string, unknown>;
     subtotal += Number(d.subtotal ?? raw.subtotal ?? 0);
     serviceCharge += Number(d.serviceCharge ?? raw.service_charge ?? 0);
@@ -242,17 +242,51 @@ export interface PaymentBreakdownRow {
 
 export function paymentMethodBreakdown(details: AnalyticsTransactionDetail[]): PaymentBreakdownRow[] {
   const map = new Map<string, { orders: number; total: number; totalAfterDiscount: number }>();
-  for (const d of details) {
-    const key = paymentMethodDisplay(d.method);
-    const prev = map.get(key) ?? { orders: 0, total: 0, totalAfterDiscount: 0 };
-    prev.orders += 1;
-    prev.total += grossBillTotal(d);
-    prev.totalAfterDiscount += chargedTotal(d);
-    map.set(key, prev);
+  for (const detail of uniqueChecks(details)) {
+    const payments = detail.payments?.length
+      ? detail.payments
+      : [{ method: detail.method, amount: chargedTotal(detail), cardName: detail.cardName }];
+    for (const payment of payments) {
+      const key = tenderDisplayName(payment.method, payment.cardName);
+      if (key === '—') continue;
+      const prev = map.get(key) ?? { orders: 0, total: 0, totalAfterDiscount: 0 };
+      const amount = roundReportMoney(Number(payment.amount ?? 0));
+      prev.orders += 1;
+      prev.total += amount;
+      prev.totalAfterDiscount += amount;
+      map.set(key, prev);
+    }
   }
   return Array.from(map.entries())
-    .map(([method, v]) => ({ method, ...v }))
+    .map(([method, v]) => ({
+      method,
+      orders: v.orders,
+      total: roundReportMoney(v.total),
+      totalAfterDiscount: roundReportMoney(v.totalAfterDiscount),
+    }))
     .sort((a, b) => b.totalAfterDiscount - a.totalAfterDiscount);
+}
+
+/** Prefer GET /api/analytics/payment-breakdown. Drop a generic Card row when Visa/Amex/… are already listed. */
+export function paymentRowsFromApi(
+  rows: { name: string; value: number; method?: string | null; cardName?: string | null }[],
+  details: AnalyticsTransactionDetail[],
+): PaymentBreakdownRow[] {
+  const brands = rows.some((row) => (row.method ?? '').toLowerCase() === 'card' && row.cardName);
+  const counts = new Map(paymentMethodBreakdown(details).map((row) => [row.method, row.orders]));
+  return rows
+    .filter((row) => {
+      const genericCard = (row.method ?? '').toLowerCase() === 'card'
+        && !row.cardName
+        && /^card$/i.test(row.name);
+      return !(brands && genericCard);
+    })
+    .map((row) => ({
+      method: row.name,
+      orders: counts.get(row.name) ?? 0,
+      total: roundReportMoney(Number(row.value) || 0),
+      totalAfterDiscount: roundReportMoney(Number(row.value) || 0),
+    }));
 }
 
 export interface ReportDiscountPart {
@@ -265,6 +299,7 @@ export function discountParts(detail: {
   discountTotal?: number | null;
   discountFood?: number | null;
   discountDrink?: number | null;
+  discountItems?: number | null;
   discountTotalPercent?: number | null;
   discountFoodPercent?: number | null;
   discountDrinkPercent?: number | null;
@@ -289,6 +324,7 @@ export function discountParts(detail: {
   if (Number(detail.discountDrinkPercent ?? 0) > 0) {
     push(`Drink ${Number(detail.discountDrinkPercent)}%`, detail.discountDrinkPercentAmount);
   }
+  push('Disc. Items', detail.discountItems);
   if (parts.length === 0 && Number(detail.discount ?? 0) > 0) {
     parts.push({ type: 'Discount', amount: Number(detail.discount) });
   }
@@ -304,6 +340,17 @@ export function discountAmount(detail: Parameters<typeof discountParts>[0]): num
   return roundReportMoney(discountParts(detail).reduce((sum, part) => sum + part.amount, 0));
 }
 
+/** Discount kinds across the report, including Disc. Items. Empty kinds are omitted. */
+export function discountBreakdown(details: Parameters<typeof discountParts>[0][]): ReportDiscountPart[] {
+  const totals = new Map<string, number>();
+  for (const detail of uniqueChecks(details)) {
+    for (const part of discountParts(detail)) {
+      totals.set(part.type, roundReportMoney((totals.get(part.type) ?? 0) + part.amount));
+    }
+  }
+  return Array.from(totals.entries()).map(([type, amount]) => ({ type, amount }));
+}
+
 /**
  * Amount collected after the discount.
  * The order total is often still the pre-discount bill; the payment amount is what was charged.
@@ -312,9 +359,9 @@ export function chargedTotal(detail: AnalyticsTransactionDetail): number {
   const gross = roundReportMoney(Number(detail.total ?? detail.amount ?? 0));
   const discount = discountAmount(detail);
   const payments = detail.payments ?? [];
-  const matched = payments.find((p) => p.paymentId && p.paymentId === detail.paymentId);
-  const paidRaw = matched?.amount ?? (payments.length === 1 ? payments[0]?.amount : undefined);
-  const paid = paidRaw != null && Number.isFinite(Number(paidRaw)) ? roundReportMoney(Number(paidRaw)) : 0;
+  const paid = payments.length > 0
+    ? roundReportMoney(payments.reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0))
+    : 0;
 
   if (discount <= 0) {
     return paid > 0 && gross <= 0 ? paid : gross;
@@ -328,12 +375,16 @@ export function chargedTotal(detail: AnalyticsTransactionDetail): number {
 
 /** Bill before the discount. When no discount was used, this matches the amount collected. */
 export function grossBillTotal(detail: AnalyticsTransactionDetail): number {
+  const built = roundReportMoney(
+    Number(detail.subtotal ?? 0) + Number(detail.serviceCharge ?? 0) + Number(detail.vat ?? 0),
+  );
   const stored = roundReportMoney(Number(detail.total ?? detail.amount ?? 0));
+  const face = built > stored + 0.05 ? built : stored;
   const discount = discountAmount(detail);
   const charged = chargedTotal(detail);
-  if (discount <= 0) return charged > 0 ? charged : stored;
+  if (discount <= 0) return Math.max(face, charged);
   const rebuilt = roundReportMoney(charged + discount);
-  return stored + 0.05 >= rebuilt ? stored : rebuilt;
+  return face + 0.05 >= rebuilt ? face : rebuilt;
 }
 
 export interface ReportGridRow {
@@ -426,8 +477,88 @@ function compareOrderId(a: string, b: string): number {
   return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
 }
 
+/** One check per order. Cash + card on the same order must not become two order ids. */
+export function checkKey(detail: {
+  orderId?: string | null;
+  paymentId?: string | null;
+  tenderGroupId?: string | null;
+  payments?: { tenderGroupId?: string | null }[] | null;
+}): string {
+  const orderId = (detail.orderId ?? '').trim();
+  if (orderId) return `order:${orderId}`;
+  const tender = (
+    detail.tenderGroupId
+    ?? detail.payments?.find((p) => p.tenderGroupId)?.tenderGroupId
+    ?? ''
+  ).trim();
+  if (tender) return `tender:${tender}`;
+  return `pay:${detail.paymentId ?? ''}`;
+}
+
+function mergePaymentLists(
+  primary: AnalyticsTransactionDetail['payments'],
+  extra: AnalyticsTransactionDetail['payments'],
+): AnalyticsTransactionDetail['payments'] {
+  const merged = [...(primary ?? [])];
+  const seen = new Set(merged.map((p) => p.paymentId).filter(Boolean));
+  for (const payment of extra ?? []) {
+    if (payment.paymentId && seen.has(payment.paymentId)) continue;
+    if (payment.paymentId) seen.add(payment.paymentId);
+    merged.push(payment);
+  }
+  return merged.length > 0 ? merged : undefined;
+}
+
+export function uniqueChecks(details: AnalyticsTransactionDetail[]): AnalyticsTransactionDetail[] {
+  const map = new Map<string, AnalyticsTransactionDetail>();
+  for (const detail of details) {
+    const key = checkKey(detail);
+    const prev = map.get(key);
+    if (!prev) {
+      map.set(key, detail);
+      continue;
+    }
+    const prevScore = (prev.items?.length ?? 0) + (Number(prev.subtotal ?? 0) > 0 ? 10 : 0);
+    const nextScore = (detail.items?.length ?? 0) + (Number(detail.subtotal ?? 0) > 0 ? 10 : 0);
+    const keep = nextScore > prevScore ? detail : prev;
+    const other = keep === detail ? prev : detail;
+    map.set(key, {
+      ...keep,
+      payments: mergePaymentLists(keep.payments, other.payments),
+    });
+  }
+  return Array.from(map.values());
+}
+
+export function tenderDisplayName(method?: string | null, cardName?: string | null): string {
+  const raw = (method ?? '').trim();
+  const lower = raw.toLowerCase();
+  if (lower.includes('visa')) return 'Visa';
+  if (lower.includes('amex') || lower.includes('american')) return 'Amex';
+  if (lower.includes('master')) return 'Master';
+  if (lower.includes('union')) return 'Union';
+  if (lower.includes('card')) {
+    const brand = cardName?.trim();
+    return brand || 'Card';
+  }
+  if (lower.includes('cash')) return 'Cash';
+  if (lower.includes('qr')) return 'QR';
+  if (lower.includes('room')) return 'Room';
+  return raw || '—';
+}
+
+export function checkPaymentLabel(detail: AnalyticsTransactionDetail): string {
+  const payments = detail.payments ?? [];
+  if (payments.length > 1) {
+    return payments
+      .map((payment) => `${tenderDisplayName(payment.method, payment.cardName)} ${formatReportMoney(Number(payment.amount ?? 0))}`)
+      .join(', ');
+  }
+  return tenderDisplayName(detail.method, detail.cardName);
+}
+
 export function buildReportGridRows(details: AnalyticsTransactionDetail[]): ReportGridRow[] {
-  const ordered = [...details].sort((a, b) => compareOrderId(a.orderId ?? '', b.orderId ?? ''));
+  const ordered = uniqueChecks(details).sort((a, b) => compareOrderId(a.orderId ?? '', b.orderId ?? ''));
   const rows: ReportGridRow[] = [];
   for (const d of ordered) {
     const items = orderItems(d);
@@ -457,9 +588,13 @@ export function buildReportGridRows(details: AnalyticsTransactionDetail[]): Repo
       totalAfterDiscount,
       tip: Number(d.tip ?? 0) || 0,
       discountParts: discountParts(d),
-      payment: paymentMethodDisplay(d.method),
-      cardName: d.cardName?.trim() ?? '',
-      cardNumber: d.cardNumber?.trim() ?? '',
+      payment: checkPaymentLabel(d),
+      cardName: (d.payments ?? []).map((p) => p.cardName?.trim()).filter(Boolean).join(', ')
+        || d.cardName?.trim()
+        || '',
+      cardNumber: (d.payments ?? []).map((p) => p.cardNumber?.trim()).filter(Boolean).join(', ')
+        || d.cardNumber?.trim()
+        || '',
       status: 'DONE',
       openedAt: fmtReportDateTime(d.openedAt),
       closedAt: fmtReportDateTime(d.closedAt ?? d.time),
@@ -562,14 +697,19 @@ export function buildShopReportCsv(
   dateTo: string,
   generatedAt: Date,
   menuLookup?: MenuCategoryLookup,
+  paymentBreakdown?: { name: string; value: number; method?: string | null; cardName?: string | null }[],
 ): string {
   const lines: string[] = [];
-  const financial = aggregateFinancials(orderDetails);
-  const paymentRows = paymentMethodBreakdown(orderDetails);
-  const gridRows = buildReportGridRows(orderDetails);
+  const checks = uniqueChecks(orderDetails);
+  const financial = aggregateFinancials(checks);
+  const discountLines = discountBreakdown(checks);
+  const paymentRows = paymentBreakdown?.length
+    ? paymentRowsFromApi(paymentBreakdown, checks)
+    : paymentMethodBreakdown(checks);
+  const gridRows = buildReportGridRows(checks);
   const colTotals = gridColumnTotals(gridRows);
-  const totalOrders = orderDetails.length;
-  const totalGuests = orderDetails.reduce(
+  const totalOrders = checks.length;
+  const totalGuests = checks.reduce(
     (s, d) => s + (Number(d.guestCount ?? d.covers ?? 1) || 1),
     0,
   );
@@ -599,23 +739,24 @@ export function buildShopReportCsv(
   lines.push(csvRow(['VAT', moneyCsv(financial.vat)]));
   lines.push(csvRow(['Total', moneyCsv(financial.billTotal)]));
   lines.push(csvRow(['Discount', moneyCsv(financial.discount)]));
+  for (const line of discountLines) {
+    lines.push(csvRow([line.type, moneyCsv(line.amount)]));
+  }
   lines.push(csvRow(['Total after discount', moneyCsv(financial.grandTotal)]));
   lines.push(csvRow(['Tips', moneyCsv(financial.tips)]));
   lines.push('');
 
   lines.push(csvRow(['Payment Method Breakdown']));
-  lines.push(csvRow(['Payment Method', 'Orders', 'Total', 'Total after discount']));
+  lines.push(csvRow(['Payment Method', 'Tenders', 'Amount taken']));
   let payOrders = 0;
-  let payBill = 0;
   let payTotal = 0;
   for (const r of paymentRows) {
-    lines.push(csvRow([r.method, r.orders, moneyCsv(r.total), moneyCsv(r.totalAfterDiscount)]));
+    lines.push(csvRow([r.method, r.orders, moneyCsv(r.totalAfterDiscount)]));
     payOrders += r.orders;
-    payBill += r.total;
     payTotal += r.totalAfterDiscount;
   }
   if (paymentRows.length > 0) {
-    lines.push(csvRow(['TOTAL', payOrders, moneyCsv(payBill), moneyCsv(payTotal)]));
+    lines.push(csvRow(['TOTAL', payOrders, moneyCsv(payTotal)]));
   }
   lines.push('');
 

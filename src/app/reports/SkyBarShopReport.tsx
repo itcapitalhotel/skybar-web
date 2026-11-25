@@ -2,17 +2,20 @@
 
 import React, { useEffect, useState } from 'react';
 import { Eye, Printer, RotateCcw } from 'lucide-react';
-import type { AnalyticsTransactionDetail } from '@/lib/api/types';
+import type { AnalyticsTransactionDetail, PaymentBreakdown } from '@/lib/api/types';
 import { receiptsApi } from '@/lib/api/client';
 import {
   aggregateFinancials,
   aggregateSalesByCategoryType,
   buildReportGridRows,
+  discountBreakdown,
   chargedTotal,
   formatReportMoney,
   gridColumnTotals,
   grossBillTotal,
   paymentMethodBreakdown,
+  paymentRowsFromApi,
+  uniqueChecks,
   type MenuCategoryLookup,
   type ReportGridRow,
 } from '@/app/reports/reportDocumentHelpers';
@@ -28,16 +31,17 @@ const tdNum = `${td} text-right tabular-nums whitespace-nowrap font-medium text-
 const sectionTitle =
   'text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500 border-b border-gray-300 pb-2 mb-3';
 
-function formatReportDateLabel(iso: string): string {
-  try {
-    return new Date(iso.includes('T') ? iso : `${iso}T12:00:00`).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
-  } catch {
-    return iso;
-  }
+/** Business day: 5:00 AM on the first date through 5:00 AM the morning after the last date. */
+function formatServicePeriod(from: string, to: string): string {
+  const start = new Date(`${from}T12:00:00`);
+  const end = new Date(`${to}T12:00:00`);
+  end.setDate(end.getDate() + 1);
+  const day = (date: Date) => date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  return `${day(start)} 5:00 AM – ${day(end)} 5:00 AM`;
 }
 
 function SummaryMetricRow({
@@ -72,6 +76,7 @@ interface SkyBarShopReportProps {
   /** Epoch ms when the report was loaded; formatted only after mount to avoid hydration mismatch. */
   generatedAt: number | null;
   orderDetails: AnalyticsTransactionDetail[];
+  paymentBreakdown?: PaymentBreakdown[];
   menuLookup?: MenuCategoryLookup;
   loading?: boolean;
   onViewOrder?: (paymentId: string) => void;
@@ -83,27 +88,31 @@ export default function SkyBarShopReport({
   dateTo,
   generatedAt,
   orderDetails,
+  paymentBreakdown,
   menuLookup,
   loading,
   onViewOrder,
   onReopenOrder,
 }: SkyBarShopReportProps) {
-  const financial = aggregateFinancials(orderDetails);
-  const categorySales = aggregateSalesByCategoryType(orderDetails, menuLookup);
-  const paymentRows = paymentMethodBreakdown(orderDetails);
-  const gridRows = buildReportGridRows(orderDetails);
+  const checks = uniqueChecks(orderDetails);
+  const financial = aggregateFinancials(checks);
+  const categorySales = aggregateSalesByCategoryType(checks, menuLookup);
+  const discountLines = discountBreakdown(checks);
+  const paymentRows = paymentBreakdown?.length
+    ? paymentRowsFromApi(paymentBreakdown, checks)
+    : paymentMethodBreakdown(checks);
+  const gridRows = buildReportGridRows(checks);
   const colTotals = gridColumnTotals(gridRows);
-  const totalOrders = orderDetails.length;
-  const totalGuests = orderDetails.reduce(
+  const totalOrders = checks.length;
+  const totalGuests = checks.reduce(
     (s, d) => s + (Number(d.guestCount ?? d.covers ?? 1) || 1),
     0,
   );
   const paymentOrdersTotal = paymentRows.reduce((s, r) => s + r.orders, 0);
-  const paymentBillTotal = paymentRows.reduce((s, r) => s + r.total, 0);
   const paymentAmountTotal = paymentRows.reduce((s, r) => s + r.totalAfterDiscount, 0);
   const orderTypeRows = (() => {
     const map = new Map<string, { checks: number; guests: number; total: number; totalAfterDiscount: number }>();
-    for (const detail of orderDetails) {
+    for (const detail of checks) {
       const name = detail.orderTypeName?.trim() || '—';
       const row = map.get(name) ?? { checks: 0, guests: 0, total: 0, totalAfterDiscount: 0 };
       row.checks += 1;
@@ -125,7 +134,7 @@ export default function SkyBarShopReport({
       new Date(generatedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }),
     );
   }, [generatedAt]);
-  const rangeLabel = `${formatReportDateLabel(dateFrom)} — ${formatReportDateLabel(dateTo)}`;
+  const rangeLabel = formatServicePeriod(dateFrom, dateTo);
   const categoryLineTotal = categorySales.food + categorySales.drink;
 
   return (
@@ -214,6 +223,13 @@ export default function SkyBarShopReport({
               <SummaryMetricRow label="VAT" value={formatReportMoney(financial.vat)} />
               <SummaryMetricRow label="Total" value={formatReportMoney(financial.billTotal)} emphasize />
               <SummaryMetricRow label="Discount" value={formatReportMoney(financial.discount)} />
+              {discountLines.map((line) => (
+                <SummaryMetricRow
+                  key={line.type}
+                  label={line.type}
+                  value={formatReportMoney(line.amount)}
+                />
+              ))}
               <SummaryMetricRow
                 label="Total after discount"
                 value={formatReportMoney(financial.grandTotal)}
@@ -230,15 +246,14 @@ export default function SkyBarShopReport({
             <thead>
               <tr>
                 <th className={th}>Payment Method</th>
-                <th className={`${th} text-right`}>Orders</th>
-                <th className={`${th} text-right`}>Total</th>
-                <th className={`${th} text-right`}>Total after discount</th>
+                <th className={`${th} text-right`}>Tenders</th>
+                <th className={`${th} text-right`}>Amount taken</th>
               </tr>
             </thead>
             <tbody>
               {paymentRows.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className={`${td} text-center text-gray-500 py-4`}>
+                  <td colSpan={3} className={`${td} text-center text-gray-500 py-4`}>
                     {loading ? 'Loading…' : 'No payments in range'}
                   </td>
                 </tr>
@@ -247,7 +262,6 @@ export default function SkyBarShopReport({
                   <tr key={r.method}>
                     <td className={td}>{r.method}</td>
                     <td className={tdNum}>{r.orders}</td>
-                    <td className={tdNum}>{formatReportMoney(r.total)}</td>
                     <td className={tdNum}>{formatReportMoney(r.totalAfterDiscount)}</td>
                   </tr>
                 ))
@@ -256,7 +270,6 @@ export default function SkyBarShopReport({
                 <tr className="bg-gray-50">
                   <td className={`${td} font-semibold text-gray-800`}>Total</td>
                   <td className={`${tdNum} font-semibold`}>{paymentOrdersTotal}</td>
-                  <td className={`${tdNum} font-semibold`}>{formatReportMoney(paymentBillTotal)}</td>
                   <td className={`${tdNum} font-semibold`}>{formatReportMoney(paymentAmountTotal)}</td>
                 </tr>
               ) : null}
