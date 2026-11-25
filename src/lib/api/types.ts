@@ -452,6 +452,8 @@ export interface UpdateClosedOrderRequest {
   orderTypeId?: string;
   /** Required when the bill was split. */
   paymentId?: string;
+  /** ISO time the check was closed. Updates the report closing time. */
+  closedAt?: string;
 }
 
 export interface VoidOrderItemRequest {

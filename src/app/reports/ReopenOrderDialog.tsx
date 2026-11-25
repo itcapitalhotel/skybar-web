@@ -19,6 +19,8 @@ interface FormState {
   guestCount: string;
   orderTypeId: string;
   note: string;
+  /** Local datetime-local value, yyyy-MM-ddTHH:mm */
+  closedAt: string;
 }
 
 const FALLBACK_ORDER_TYPES: OrderType[] = [
@@ -57,9 +59,18 @@ function sameMoney(a: string, b: string): boolean {
   return Math.abs(na - nb) < 0.001;
 }
 
+function toDatetimeLocal(iso?: string | null): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function formFromDetail(detail: OrderDetailsResponse, paymentId: string, note: string): FormState {
   const payments = detail.payments ?? [];
   const payment = payments.find((p) => p.paymentId === paymentId) ?? payments[0];
+  const closedSource = payment?.closedAt ?? payment?.paidAt ?? payment?.time ?? detail.closedAt;
   return {
     paymentId: payment?.paymentId ?? paymentId,
     method: toMethod(payment?.method ?? detail.method),
@@ -71,6 +82,7 @@ function formFromDetail(detail: OrderDetailsResponse, paymentId: string, note: s
     guestCount: detail.covers != null && detail.covers > 0 ? String(detail.covers) : '',
     orderTypeId: detail.orderTypeId ?? '',
     note,
+    closedAt: toDatetimeLocal(closedSource),
   };
 }
 
@@ -122,6 +134,13 @@ function buildPatch(
 
   const note = form.note.trim();
   if (note && note !== base.note.trim()) body.note = note;
+
+  if (form.closedAt.trim() !== base.closedAt.trim()) {
+    if (!form.closedAt.trim()) return 'Enter a closing time.';
+    const closed = new Date(form.closedAt);
+    if (Number.isNaN(closed.getTime())) return 'Closing time is not a valid date.';
+    body.closedAt = closed.toISOString();
+  }
 
   const changed = Object.keys(body);
   if (changed.length === 0) return 'empty';
@@ -430,6 +449,16 @@ export default function ReopenOrderDialog({
                     />
                   </label>
                 </div>
+
+                <label className="block space-y-1">
+                  <span className="text-xs text-muted-foreground">Closing time</span>
+                  <input
+                    type="datetime-local"
+                    className="field-input w-full"
+                    value={form.closedAt}
+                    onChange={(e) => patchField({ closedAt: e.target.value })}
+                  />
+                </label>
 
                 <label className="block space-y-1">
                   <span className="text-xs text-muted-foreground">Order type</span>
