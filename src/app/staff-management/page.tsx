@@ -14,6 +14,8 @@ const ROLE_CONFIG: Record<UserRole, { color: string; bg: string; border: string;
   Admin:     { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)',  border: 'rgba(245,158,11,0.35)',  icon: '👑', label: 'Admin' },
   Manager:   { color: '#a855f7', bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.35)', icon: '🎯', label: 'Manager' },
   Supervisor:{ color: '#818cf8', bg: 'rgba(129,140,248,0.12)', border: 'rgba(129,140,248,0.35)', icon: '📋', label: 'Supervisor' },
+  Finance:   { color: '#34d399', bg: 'rgba(52,211,153,0.12)', border: 'rgba(52,211,153,0.35)', icon: '💰', label: 'Finance' },
+  Service:   { color: '#38bdf8', bg: 'rgba(56,189,248,0.12)', border: 'rgba(56,189,248,0.35)', icon: '🛎️', label: 'Service' },
   Bartender: { color: '#06b6d4', bg: 'rgba(6,182,212,0.12)',  border: 'rgba(6,182,212,0.35)',  icon: '🍸', label: 'Bartender' },
   Cashier:   { color: '#10b981', bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.35)', icon: '💳', label: 'Cashier' },
 };
@@ -24,7 +26,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; dot: string 
   on_shift: { label: 'On Shift', color: 'text-cyan-400',    dot: 'bg-cyan-400'    },
 };
 
-const ROLES: UserRole[] = ['Admin', 'Manager', 'Supervisor', 'Bartender', 'Cashier'];
+const ROLES: UserRole[] = ['Admin', 'Manager', 'Supervisor', 'Finance', 'Service', 'Bartender', 'Cashier'];
 
 interface StaffFormData {
   name: string;

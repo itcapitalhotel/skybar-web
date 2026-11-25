@@ -208,8 +208,9 @@ export default function SkyBarShopReport({
               <SummaryMetricRow label="Service charge" value={formatReportMoney(financial.serviceCharge)} />
               <SummaryMetricRow label="VAT" value={formatReportMoney(financial.vat)} />
               <SummaryMetricRow label="Tips" value={formatReportMoney(financial.tips)} />
+              <SummaryMetricRow label="Discount" value={formatReportMoney(financial.discount)} />
               <SummaryMetricRow
-                label="Grand total"
+                label="Total after discount"
                 value={formatReportMoney(financial.grandTotal)}
                 emphasize
               />
@@ -305,7 +306,7 @@ export default function SkyBarShopReport({
                     'Subtotal',
                     'Service Charge',
                     'VAT',
-                    'Total',
+                    'Total after discount',
                     'Tip',
                     'Discount Type',
                     'Discount Amount',

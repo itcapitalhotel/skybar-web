@@ -24,7 +24,7 @@ export interface ManagerPinVerifyResponse {
 }
 
 // ── Staff / Users ─────────────────────────────────────────────────────────────
-export type UserRole = 'Admin' | 'Manager' | 'Supervisor' | 'Bartender' | 'Cashier';
+export type UserRole = 'Admin' | 'Manager' | 'Supervisor' | 'Finance' | 'Service' | 'Bartender' | 'Cashier';
 export type UserStatus = 'active' | 'inactive' | 'on_shift';
 
 export interface StaffUser {

@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import AppLogo from '@/components/ui/AppLogo';
-import { ShieldCheck, Coffee, CreditCard, LayoutGrid, ClipboardList, ChevronRight, User, Lock } from 'lucide-react';
+import { ShieldCheck, Coffee, CreditCard, LayoutGrid, ClipboardList, Wallet, ConciergeBell, ChevronRight, User, Lock } from 'lucide-react';
 import PinPad from '@/components/PinPad';
 import { staffApi, authApi } from '@/lib/api/client';
 import { persistLoginSession } from '@/lib/api/config';
@@ -14,6 +14,8 @@ const ROLE_CONFIG: Record<UserRole, { icon: React.ReactNode; color: string; bg: 
   Admin: { icon: <ShieldCheck size={13} />, color: 'text-rose-400', bg: 'bg-rose-500/15', border: 'border-rose-500/30' },
   Manager: { icon: <LayoutGrid size={13} />, color: 'text-purple-400', bg: 'bg-purple-500/15', border: 'border-purple-500/30' },
   Supervisor: { icon: <ClipboardList size={13} />, color: 'text-indigo-400', bg: 'bg-indigo-500/15', border: 'border-indigo-500/30' },
+  Finance: { icon: <Wallet size={13} />, color: 'text-emerald-400', bg: 'bg-emerald-500/15', border: 'border-emerald-500/30' },
+  Service: { icon: <ConciergeBell size={13} />, color: 'text-sky-400', bg: 'bg-sky-500/15', border: 'border-sky-500/30' },
   Bartender: { icon: <Coffee size={13} />, color: 'text-amber-400', bg: 'bg-amber-500/15', border: 'border-amber-500/30' },
   Cashier: { icon: <CreditCard size={13} />, color: 'text-cyan-400', bg: 'bg-cyan-500/15', border: 'border-cyan-500/30' },
 };
@@ -86,7 +88,8 @@ export default function LoginPage() {
         });
         saveSession(loginResult, staff);
         setSuccess(true);
-        setTimeout(() => router.push('/'), 800);
+        const home = (loginResult.user?.role ?? staff.role) === 'Finance' ? '/reports' : '/';
+        setTimeout(() => router.push(home), 800);
         return;
       } catch {
         const loginResult = await authApi.login({
@@ -95,7 +98,8 @@ export default function LoginPage() {
         });
         saveSession(loginResult, staff);
         setSuccess(true);
-        setTimeout(() => router.push('/'), 800);
+        const home = (loginResult.user?.role ?? staff.role) === 'Finance' ? '/reports' : '/';
+        setTimeout(() => router.push(home), 800);
       }
     } catch {
       failPin();

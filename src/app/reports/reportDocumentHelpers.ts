@@ -68,6 +68,9 @@ export interface FinancialTotals {
   serviceCharge: number;
   vat: number;
   tips: number;
+  /** Dollar discounts that were applied (a percent left at 0 is not included). */
+  discount: number;
+  /** Amount collected after those discounts. */
   grandTotal: number;
 }
 
@@ -209,6 +212,7 @@ export function aggregateFinancials(details: AnalyticsTransactionDetail[]): Fina
   let serviceCharge = 0;
   let vat = 0;
   let tips = 0;
+  let discount = 0;
   let grandTotal = 0;
   for (const d of details) {
     const raw = d as unknown as Record<string, unknown>;
@@ -216,12 +220,13 @@ export function aggregateFinancials(details: AnalyticsTransactionDetail[]): Fina
     serviceCharge += Number(d.serviceCharge ?? raw.service_charge ?? 0);
     vat += Number(d.vat ?? 0);
     tips += Number(d.tip ?? raw.tips ?? raw.tip ?? 0);
-    grandTotal += Number(d.total ?? d.amount ?? 0);
+    discount += discountAmount(d);
+    grandTotal += chargedTotal(d);
   }
   if (grandTotal > 0 && subtotal === 0 && serviceCharge === 0 && vat === 0) {
     subtotal = grandTotal;
   }
-  return { subtotal, serviceCharge, vat, tips, grandTotal };
+  return { subtotal, serviceCharge, vat, tips, discount, grandTotal };
 }
 
 export interface PaymentBreakdownRow {
@@ -236,7 +241,7 @@ export function paymentMethodBreakdown(details: AnalyticsTransactionDetail[]): P
     const key = paymentMethodDisplay(d.method);
     const prev = map.get(key) ?? { orders: 0, total: 0 };
     prev.orders += 1;
-    prev.total += Number(d.total ?? d.amount ?? 0);
+    prev.total += chargedTotal(d);
     map.set(key, prev);
   }
   return Array.from(map.entries())
@@ -267,21 +272,52 @@ export function discountParts(detail: {
     if (n > 0) parts.push({ type, amount: n });
   };
   push('Total', detail.discountTotal);
-  if (Number(detail.discountTotalPercent ?? 0) > 0 || Number(detail.discountTotalPercentAmount ?? 0) > 0) {
-    push(`Total ${Number(detail.discountTotalPercent ?? 0)}%`, detail.discountTotalPercentAmount);
+  if (Number(detail.discountTotalPercent ?? 0) > 0) {
+    push(`Total ${Number(detail.discountTotalPercent)}%`, detail.discountTotalPercentAmount);
   }
   push('Food', detail.discountFood);
-  if (Number(detail.discountFoodPercent ?? 0) > 0 || Number(detail.discountFoodPercentAmount ?? 0) > 0) {
-    push(`Food ${Number(detail.discountFoodPercent ?? 0)}%`, detail.discountFoodPercentAmount);
+  if (Number(detail.discountFoodPercent ?? 0) > 0) {
+    push(`Food ${Number(detail.discountFoodPercent)}%`, detail.discountFoodPercentAmount);
   }
   push('Drink', detail.discountDrink);
-  if (Number(detail.discountDrinkPercent ?? 0) > 0 || Number(detail.discountDrinkPercentAmount ?? 0) > 0) {
-    push(`Drink ${Number(detail.discountDrinkPercent ?? 0)}%`, detail.discountDrinkPercentAmount);
+  if (Number(detail.discountDrinkPercent ?? 0) > 0) {
+    push(`Drink ${Number(detail.discountDrinkPercent)}%`, detail.discountDrinkPercentAmount);
   }
   if (parts.length === 0 && Number(detail.discount ?? 0) > 0) {
     parts.push({ type: 'Discount', amount: Number(detail.discount) });
   }
   return parts;
+}
+
+function roundReportMoney(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/** Dollar amount taken off the check. A percent left at 0 is not counted. */
+export function discountAmount(detail: Parameters<typeof discountParts>[0]): number {
+  return roundReportMoney(discountParts(detail).reduce((sum, part) => sum + part.amount, 0));
+}
+
+/**
+ * Amount collected after the discount.
+ * The order total is often still the pre-discount bill; the payment amount is what was charged.
+ */
+export function chargedTotal(detail: AnalyticsTransactionDetail): number {
+  const gross = roundReportMoney(Number(detail.total ?? detail.amount ?? 0));
+  const discount = discountAmount(detail);
+  const payments = detail.payments ?? [];
+  const matched = payments.find((p) => p.paymentId && p.paymentId === detail.paymentId);
+  const paidRaw = matched?.amount ?? (payments.length === 1 ? payments[0]?.amount : undefined);
+  const paid = paidRaw != null && Number.isFinite(Number(paidRaw)) ? roundReportMoney(Number(paidRaw)) : 0;
+
+  if (discount <= 0) {
+    return paid > 0 && gross <= 0 ? paid : gross;
+  }
+  const net = roundReportMoney(Math.max(0, gross - discount));
+  if (paid > 0 && Math.abs(paid - net) <= 0.05) return paid;
+  if (paid > 0 && Math.abs(paid - gross) <= 0.05) return gross;
+  if (paid > 0 && paid < gross) return paid;
+  return net;
 }
 
 export interface ReportGridRow {
@@ -379,7 +415,7 @@ export function buildReportGridRows(details: AnalyticsTransactionDetail[]): Repo
     const subtotal = Number(d.subtotal ?? 0);
     const serviceCharge = Number(d.serviceCharge ?? 0);
     const vat = Number(d.vat ?? 0);
-    const orderTotal = Number(d.total ?? d.amount ?? 0);
+    const orderTotal = chargedTotal(d);
     const guests = Number(d.guestCount ?? d.covers ?? 1) || 1;
     const raw = d as unknown as Record<string, unknown>;
     const zoneLabel = String(
@@ -539,7 +575,8 @@ export function buildShopReportCsv(
   lines.push(csvRow(['Service Charge', moneyCsv(financial.serviceCharge)]));
   lines.push(csvRow(['VAT', moneyCsv(financial.vat)]));
   lines.push(csvRow(['Tips', moneyCsv(financial.tips)]));
-  lines.push(csvRow(['Grand Total', moneyCsv(financial.grandTotal)]));
+  lines.push(csvRow(['Discount', moneyCsv(financial.discount)]));
+  lines.push(csvRow(['Total after discount', moneyCsv(financial.grandTotal)]));
   lines.push('');
 
   lines.push(csvRow(['Payment Method Breakdown']));
@@ -571,7 +608,7 @@ export function buildShopReportCsv(
       'Subtotal',
       'Service Charge',
       'VAT',
-      'Total',
+      'Total after discount',
       'Tip',
       'Discount Type',
       'Discount Amount',

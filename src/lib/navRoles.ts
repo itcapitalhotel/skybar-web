@@ -4,14 +4,14 @@ import { AUTH_USER_KEY, clearAuthToken, getAuthToken } from '@/lib/api/config';
 export const PUBLIC_PATHS = new Set(['/login']);
 
 export const NAV_TABS = [
-  { label: 'Floor Map', href: '/', roles: ['Admin', 'Manager', 'Supervisor', 'Bartender', 'Cashier'] as UserRole[] },
-  { label: 'Split & Merge Bill', href: '/shift-cash-split-bill', roles: ['Admin', 'Manager', 'Supervisor', 'Cashier'] as UserRole[] },
-  { label: 'Reports', href: '/reports', roles: ['Admin', 'Manager', 'Supervisor'] as UserRole[] },
-  { label: 'Void report', href: '/void-report', roles: ['Admin', 'Manager', 'Supervisor'] as UserRole[] },
-  { label: 'Table Bookings', href: '/table-bookings', roles: ['Admin', 'Manager', 'Supervisor', 'Bartender', 'Cashier'] as UserRole[] },
+  { label: 'Floor Map', href: '/', roles: ['Admin', 'Manager', 'Supervisor', 'Service', 'Bartender', 'Cashier'] as UserRole[] },
+  { label: 'Split & Merge Bill', href: '/shift-cash-split-bill', roles: ['Admin', 'Manager', 'Supervisor', 'Service', 'Cashier'] as UserRole[] },
+  { label: 'Reports', href: '/reports', roles: ['Admin', 'Manager', 'Supervisor', 'Finance'] as UserRole[] },
+  { label: 'Void report', href: '/void-report', roles: ['Admin', 'Manager', 'Supervisor', 'Finance', 'Service'] as UserRole[] },
+  { label: 'Table Bookings', href: '/table-bookings', roles: ['Admin', 'Manager', 'Supervisor', 'Service', 'Bartender', 'Cashier'] as UserRole[] },
   { label: 'Post Items', href: '/post-items', roles: ['Admin', 'Manager', 'Supervisor'] as UserRole[] },
   { label: 'Staff', href: '/staff-management', roles: ['Admin'] as UserRole[] },
-  { label: 'Analytics', href: '/analytics', roles: ['Admin', 'Manager', 'Supervisor'] as UserRole[] },
+  { label: 'Analytics', href: '/analytics', roles: ['Admin', 'Manager', 'Supervisor', 'Finance'] as UserRole[] },
   { label: 'Admin Config', href: '/admin-config', roles: ['Admin'] as UserRole[] },
 ] as const;
 
@@ -23,17 +23,34 @@ ROUTE_ACCESS['/user-management'] = ['Admin'];
 ROUTE_ACCESS['/zone-management'] = ['Admin', 'Manager', 'Supervisor'];
 ROUTE_ACCESS['/menu-categories'] = ['Admin', 'Manager', 'Supervisor'];
 ROUTE_ACCESS['/manager-dashboard'] = ['Admin', 'Manager', 'Supervisor'];
+ROUTE_ACCESS['/close-shift-report'] = ['Admin', 'Manager', 'Supervisor'];
 ROUTE_ACCESS['/api-spec'] = ['Admin'];
 
 const ROUTE_KEYS = Object.keys(ROUTE_ACCESS).sort((a, b) => b.length - a.length);
 
 export function isUserRole(value: string | undefined): value is UserRole {
-  return value === 'Admin' || value === 'Manager' || value === 'Supervisor' || value === 'Bartender' || value === 'Cashier';
+  return (
+    value === 'Admin'
+    || value === 'Manager'
+    || value === 'Supervisor'
+    || value === 'Finance'
+    || value === 'Service'
+    || value === 'Bartender'
+    || value === 'Cashier'
+  );
 }
 
-/** Floor, reports, menu, stock, and bookings. Deletes and venue settings stay Admin. */
+/** Floor ops, menu, stock, bookings. Deletes and venue settings stay Admin. */
 export function isManagerLevel(role: UserRole): boolean {
   return role === 'Admin' || role === 'Manager' || role === 'Supervisor';
+}
+
+export function isFinanceLevel(role: UserRole): boolean {
+  return isManagerLevel(role) || role === 'Finance';
+}
+
+export function isServiceLevel(role: UserRole): boolean {
+  return isManagerLevel(role) || role === 'Service' || role === 'Bartender' || role === 'Cashier';
 }
 
 export function canAccessRoute(pathname: string, role: UserRole): boolean {
@@ -48,7 +65,10 @@ export function canAccessRoute(pathname: string, role: UserRole): boolean {
     }
   }
 
-  // Unknown routes — allow any authenticated role (prevents redirect traps on new pages)
+  // Finance and Service only open the pages listed for them.
+  if (role === 'Finance' || role === 'Service') return false;
+
+  // Unknown routes — allow any other authenticated role (prevents redirect traps on new pages)
   return true;
 }
 
@@ -77,11 +97,11 @@ export function getAuthRedirect(pathname: string): string | null {
   }
 
   if (isPublic) {
-    return '/';
+    return role === 'Finance' ? '/reports' : '/';
   }
 
   if (!canAccessRoute(pathname, role)) {
-    return '/';
+    return role === 'Finance' ? '/reports' : '/';
   }
 
   return null;
