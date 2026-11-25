@@ -1005,6 +1005,29 @@ export default function FloorMapClient() {
               >
                 <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
               </button>
+              <button
+                onClick={() => {
+                  setEditMode(v => {
+                    if (v) setSelectedTable(null);
+                    return !v;
+                  });
+                }}
+                className={`flex items-center gap-1.5 px-2.5 md:px-3 py-2 rounded-xl border text-xs font-medium transition-all duration-150 ${
+                  editMode
+                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-400' :'bg-muted/50 border-border text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <PenLine size={13} />
+                <span className="hidden sm:inline">{editMode ? 'Editing' : 'Edit Floor'}</span>
+              </button>
+              {editMode && (
+                <button
+                  onClick={() => setNewTableOpen(true)}
+                  className="flex items-center gap-1.5 px-2.5 md:px-3 py-2 rounded-xl bg-primary/15 border border-primary/40 text-primary text-xs font-medium hover:bg-primary/20 transition-all"
+                >
+                  <Plus size={13} /> <span className="hidden sm:inline">Add Table</span>
+                </button>
+              )}
               {role === 'Admin' && (
                 <>
                   <Link
@@ -1019,29 +1042,6 @@ export default function FloorMapClient() {
                   >
                     <Layers size={13} /> <span className="hidden sm:inline">Zones</span>
                   </Link>
-                  <button
-                    onClick={() => {
-                      setEditMode(v => {
-                        if (v) setSelectedTable(null);
-                        return !v;
-                      });
-                    }}
-                    className={`flex items-center gap-1.5 px-2.5 md:px-3 py-2 rounded-xl border text-xs font-medium transition-all duration-150 ${
-                      editMode
-                        ? 'bg-amber-500/15 border-amber-500/40 text-amber-400' :'bg-muted/50 border-border text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    <PenLine size={13} />
-                    <span className="hidden sm:inline">{editMode ? 'Editing' : 'Edit Floor'}</span>
-                  </button>
-                  {editMode && (
-                    <button
-                      onClick={() => setNewTableOpen(true)}
-                      className="flex items-center gap-1.5 px-2.5 md:px-3 py-2 rounded-xl bg-primary/15 border border-primary/40 text-primary text-xs font-medium hover:bg-primary/20 transition-all"
-                    >
-                      <Plus size={13} /> <span className="hidden sm:inline">Add Table</span>
-                    </button>
-                  )}
                 </>
               )}
             </div>
@@ -1069,7 +1069,7 @@ export default function FloorMapClient() {
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/15">
             <PenLine size={12} className="text-amber-400 shrink-0" />
             <span className="text-xs text-amber-400/90">
-              Tap a table to <strong className="text-amber-300">rename, resize, or delete</strong> · Drag to move · Drag the corner handle to resize
+              Tap a table to <strong className="text-amber-300">{role === 'Admin' ? 'rename, resize, or delete' : 'rename or resize'}</strong> · Drag to move · Drag the corner handle to resize
             </span>
           </div>
         ) : (

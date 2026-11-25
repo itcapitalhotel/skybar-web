@@ -8,8 +8,10 @@ import {
   aggregateFinancials,
   aggregateSalesByCategoryType,
   buildReportGridRows,
+  chargedTotal,
   formatReportMoney,
   gridColumnTotals,
+  grossBillTotal,
   paymentMethodBreakdown,
   type MenuCategoryLookup,
   type ReportGridRow,
@@ -17,10 +19,10 @@ import {
 import { toast } from 'sonner';
 
 const th =
-  'border border-gray-300 bg-gray-50 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-gray-600 whitespace-nowrap';
-const td = 'border border-gray-300 px-3 py-2 text-[11px] text-gray-800 align-middle';
+  'border border-gray-300 bg-gray-50 px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-gray-600 whitespace-nowrap print:px-1 print:py-0.5 print:tracking-normal';
+const td = 'border border-gray-300 px-2 py-1.5 text-[11px] text-gray-800 align-middle print:px-1 print:py-0.5 print:text-[8px]';
 /** Wide enough that a typical item name wraps once, never more than two lines. */
-const itemCol = 'min-w-[17rem] w-[20rem] max-w-[20rem]';
+const itemCol = 'min-w-[14rem] w-[16rem] max-w-[16rem] print:min-w-0 print:w-auto print:max-w-[7.5rem]';
 const tdNum = `${td} text-right tabular-nums whitespace-nowrap font-medium text-gray-900`;
 
 const sectionTitle =
@@ -97,15 +99,17 @@ export default function SkyBarShopReport({
     0,
   );
   const paymentOrdersTotal = paymentRows.reduce((s, r) => s + r.orders, 0);
-  const paymentAmountTotal = paymentRows.reduce((s, r) => s + r.total, 0);
+  const paymentBillTotal = paymentRows.reduce((s, r) => s + r.total, 0);
+  const paymentAmountTotal = paymentRows.reduce((s, r) => s + r.totalAfterDiscount, 0);
   const orderTypeRows = (() => {
-    const map = new Map<string, { checks: number; guests: number; total: number }>();
+    const map = new Map<string, { checks: number; guests: number; total: number; totalAfterDiscount: number }>();
     for (const detail of orderDetails) {
       const name = detail.orderTypeName?.trim() || '—';
-      const row = map.get(name) ?? { checks: 0, guests: 0, total: 0 };
+      const row = map.get(name) ?? { checks: 0, guests: 0, total: 0, totalAfterDiscount: 0 };
       row.checks += 1;
       row.guests += Number(detail.guestCount ?? detail.covers ?? 0) || 0;
-      row.total += Number(detail.total ?? detail.amount ?? 0);
+      row.total += grossBillTotal(detail);
+      row.totalAfterDiscount += chargedTotal(detail);
       map.set(name, row);
     }
     return Array.from(map, ([name, row]) => ({ name, ...row }));
@@ -125,17 +129,17 @@ export default function SkyBarShopReport({
   const categoryLineTotal = categorySales.food + categorySales.drink;
 
   return (
-    <div className="skybar-shop-report bg-white text-gray-900 rounded-lg shadow-sm border border-gray-300 overflow-hidden print:overflow-visible print:shadow-none">
-      <header className="px-8 py-6 border-b-2 border-gray-800 bg-white">
-        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+    <div className="skybar-shop-report bg-white text-gray-900 rounded-lg shadow-sm border border-gray-300 overflow-hidden print:overflow-visible print:shadow-none print:rounded-none print:border-0">
+      <header className="px-6 py-4 border-b-2 border-gray-800 bg-white print:px-0 print:py-2">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 print:gap-1">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-500 mb-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-500 mb-1 print:mb-0 print:tracking-normal">
               NAKNAK POS
             </p>
-            <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">
+            <h1 className="text-xl font-semibold text-gray-900 tracking-tight print:text-base">
               Shop &amp; Revenue Report
             </h1>
-            <p className="text-sm text-gray-600 mt-1">Period: {rangeLabel}</p>
+            <p className="text-sm text-gray-600 mt-0.5 print:text-[10px]">Period: {rangeLabel}</p>
           </div>
           <div className="text-left sm:text-right text-[11px] text-gray-500 leading-relaxed">
             <p>
@@ -152,10 +156,11 @@ export default function SkyBarShopReport({
         </div>
       </header>
 
-      <div className="px-8 py-6 space-y-8 max-h-[calc(100vh-11rem)] report-page-scroll print:max-h-none print:overflow-visible">
+      <div className="px-6 py-4 space-y-5 max-h-[calc(100vh-11rem)] report-page-scroll print:max-h-none print:overflow-visible print:px-0 print:py-2 print:space-y-3">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 print:grid-cols-2 print:gap-3">
         <section>
           <h2 className={sectionTitle}>Executive summary</h2>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 print:grid-cols-1 print:gap-2">
             <div>
               <p className="text-[10px] font-medium uppercase tracking-wide text-gray-400 mb-2">
                 Operations
@@ -207,13 +212,14 @@ export default function SkyBarShopReport({
               <SummaryMetricRow label="Subtotal" value={formatReportMoney(financial.subtotal)} />
               <SummaryMetricRow label="Service charge" value={formatReportMoney(financial.serviceCharge)} />
               <SummaryMetricRow label="VAT" value={formatReportMoney(financial.vat)} />
-              <SummaryMetricRow label="Tips" value={formatReportMoney(financial.tips)} />
+              <SummaryMetricRow label="Total" value={formatReportMoney(financial.billTotal)} emphasize />
               <SummaryMetricRow label="Discount" value={formatReportMoney(financial.discount)} />
               <SummaryMetricRow
                 label="Total after discount"
                 value={formatReportMoney(financial.grandTotal)}
                 emphasize
               />
+              <SummaryMetricRow label="Tips" value={formatReportMoney(financial.tips)} />
             </tbody>
           </table>
         </section>
@@ -225,13 +231,14 @@ export default function SkyBarShopReport({
               <tr>
                 <th className={th}>Payment Method</th>
                 <th className={`${th} text-right`}>Orders</th>
-                <th className={`${th} text-right`}>Total Amount</th>
+                <th className={`${th} text-right`}>Total</th>
+                <th className={`${th} text-right`}>Total after discount</th>
               </tr>
             </thead>
             <tbody>
               {paymentRows.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className={`${td} text-center text-gray-500 py-4`}>
+                  <td colSpan={4} className={`${td} text-center text-gray-500 py-4`}>
                     {loading ? 'Loading…' : 'No payments in range'}
                   </td>
                 </tr>
@@ -241,6 +248,7 @@ export default function SkyBarShopReport({
                     <td className={td}>{r.method}</td>
                     <td className={tdNum}>{r.orders}</td>
                     <td className={tdNum}>{formatReportMoney(r.total)}</td>
+                    <td className={tdNum}>{formatReportMoney(r.totalAfterDiscount)}</td>
                   </tr>
                 ))
               )}
@@ -248,6 +256,7 @@ export default function SkyBarShopReport({
                 <tr className="bg-gray-50">
                   <td className={`${td} font-semibold text-gray-800`}>Total</td>
                   <td className={`${tdNum} font-semibold`}>{paymentOrdersTotal}</td>
+                  <td className={`${tdNum} font-semibold`}>{formatReportMoney(paymentBillTotal)}</td>
                   <td className={`${tdNum} font-semibold`}>{formatReportMoney(paymentAmountTotal)}</td>
                 </tr>
               ) : null}
@@ -264,12 +273,13 @@ export default function SkyBarShopReport({
                 <th className={`${th} text-right`}>Checks</th>
                 <th className={`${th} text-right`}>Guests</th>
                 <th className={`${th} text-right`}>Total</th>
+                <th className={`${th} text-right`}>Total after discount</th>
               </tr>
             </thead>
             <tbody>
               {orderTypeRows.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className={`${td} text-center text-gray-500 py-4`}>
+                  <td colSpan={5} className={`${td} text-center text-gray-500 py-4`}>
                     {loading ? 'Loading…' : 'No checks in range'}
                   </td>
                 </tr>
@@ -280,17 +290,19 @@ export default function SkyBarShopReport({
                     <td className={tdNum}>{row.checks}</td>
                     <td className={tdNum}>{row.guests}</td>
                     <td className={tdNum}>{formatReportMoney(row.total)}</td>
+                    <td className={tdNum}>{formatReportMoney(row.totalAfterDiscount)}</td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
         </section>
+        </div>
 
         <section>
           <h2 className={sectionTitle}>Transaction detail</h2>
-          <div className="-mx-2">
-            <table className="w-full min-w-[1560px] border-collapse">
+          <div className="-mx-2 print:mx-0">
+            <table className="report-detail-table w-full min-w-[1680px] border-collapse print:min-w-0">
               <thead>
                 <tr>
                   {[
@@ -306,6 +318,7 @@ export default function SkyBarShopReport({
                     'Subtotal',
                     'Service Charge',
                     'VAT',
+                    'Total',
                     'Total after discount',
                     'Tip',
                     'Discount Type',
@@ -329,13 +342,13 @@ export default function SkyBarShopReport({
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={onViewOrder ? 23 : 22} className={`${td} text-center py-8 text-gray-500`}>
+                    <td colSpan={onViewOrder ? 24 : 23} className={`${td} text-center py-8 text-gray-500`}>
                       Loading line items…
                     </td>
                   </tr>
                 ) : gridRows.length === 0 ? (
                   <tr>
-                    <td colSpan={onViewOrder ? 23 : 22} className={`${td} text-center py-8 text-gray-500`}>
+                    <td colSpan={onViewOrder ? 24 : 23} className={`${td} text-center py-8 text-gray-500`}>
                       No transactions for the selected range.
                     </td>
                   </tr>
@@ -353,6 +366,7 @@ export default function SkyBarShopReport({
                     <td className={tdNum}>{formatReportMoney(colTotals.serviceCharge)}</td>
                     <td className={tdNum}>{formatReportMoney(colTotals.vat)}</td>
                     <td className={tdNum}>{formatReportMoney(colTotals.orderTotal)}</td>
+                    <td className={tdNum}>{formatReportMoney(colTotals.totalAfterDiscount)}</td>
                     <td className={tdNum}>{formatReportMoney(colTotals.tip)}</td>
                     <td className={td} />
                     <td className={tdNum}>{formatReportMoney(colTotals.discount)}</td>
@@ -423,6 +437,7 @@ function ReportGridRowView({
       <td className={tdNum}>{showMoney(row.serviceCharge)}</td>
       <td className={tdNum}>{showMoney(row.vat)}</td>
       <td className={tdNum}>{showMoney(row.orderTotal)}</td>
+      <td className={tdNum}>{showMoney(row.totalAfterDiscount)}</td>
       <td className={tdNum}>{showMoney(row.tip)}</td>
       <td className={td}>
         {row.discountParts.length > 0 ? (

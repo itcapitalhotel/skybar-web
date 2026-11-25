@@ -154,13 +154,22 @@ export default function MenuOverlay({
     };
   }, []);
 
-  const sortedCategories = useMemo(
-    () => [...categories].sort((a, b) => {
-      const order = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
-      return order !== 0 ? order : a.label.localeCompare(b.label);
-    }),
-    [categories],
-  );
+  const sortedCategories = useMemo(() => {
+    const smallestItemId = new Map<string, string>();
+    for (const item of menuItems) {
+      const keys = [item.categoryId, item.category].filter((key): key is string => Boolean(key));
+      for (const key of keys) {
+        const current = smallestItemId.get(key);
+        if (current == null || compareMenuItemId(item.id, current) < 0) {
+          smallestItemId.set(key, item.id);
+        }
+      }
+    }
+    return [...categories].sort((a, b) => {
+      const byItem = compareMenuItemId(smallestItemId.get(a.id), smallestItemId.get(b.id));
+      return byItem !== 0 ? byItem : compareMenuItemId(a.id, b.id);
+    });
+  }, [categories, menuItems]);
 
   const filteredItems = useMemo(() => {
     return menuItems
@@ -374,7 +383,6 @@ export default function MenuOverlay({
                           ) : null}
                         </div>
                         <p className="text-sm font-medium text-foreground leading-snug break-words">
-                          <span className="text-muted-foreground tabular-nums mr-1">{item.id}</span>
                           {item.name}
                         </p>
                         {!multiSize && item.sizes?.[0]?.label ? (

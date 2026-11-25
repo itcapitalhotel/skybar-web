@@ -70,6 +70,8 @@ export interface FinancialTotals {
   tips: number;
   /** Dollar discounts that were applied (a percent left at 0 is not included). */
   discount: number;
+  /** Bill before discount (subtotal, service, and VAT). */
+  billTotal: number;
   /** Amount collected after those discounts. */
   grandTotal: number;
 }
@@ -213,6 +215,7 @@ export function aggregateFinancials(details: AnalyticsTransactionDetail[]): Fina
   let vat = 0;
   let tips = 0;
   let discount = 0;
+  let billTotal = 0;
   let grandTotal = 0;
   for (const d of details) {
     const raw = d as unknown as Record<string, unknown>;
@@ -221,32 +224,35 @@ export function aggregateFinancials(details: AnalyticsTransactionDetail[]): Fina
     vat += Number(d.vat ?? 0);
     tips += Number(d.tip ?? raw.tips ?? raw.tip ?? 0);
     discount += discountAmount(d);
+    billTotal += grossBillTotal(d);
     grandTotal += chargedTotal(d);
   }
   if (grandTotal > 0 && subtotal === 0 && serviceCharge === 0 && vat === 0) {
-    subtotal = grandTotal;
+    subtotal = billTotal || grandTotal;
   }
-  return { subtotal, serviceCharge, vat, tips, discount, grandTotal };
+  return { subtotal, serviceCharge, vat, tips, discount, billTotal, grandTotal };
 }
 
 export interface PaymentBreakdownRow {
   method: string;
   orders: number;
   total: number;
+  totalAfterDiscount: number;
 }
 
 export function paymentMethodBreakdown(details: AnalyticsTransactionDetail[]): PaymentBreakdownRow[] {
-  const map = new Map<string, { orders: number; total: number }>();
+  const map = new Map<string, { orders: number; total: number; totalAfterDiscount: number }>();
   for (const d of details) {
     const key = paymentMethodDisplay(d.method);
-    const prev = map.get(key) ?? { orders: 0, total: 0 };
+    const prev = map.get(key) ?? { orders: 0, total: 0, totalAfterDiscount: 0 };
     prev.orders += 1;
-    prev.total += chargedTotal(d);
+    prev.total += grossBillTotal(d);
+    prev.totalAfterDiscount += chargedTotal(d);
     map.set(key, prev);
   }
   return Array.from(map.entries())
     .map(([method, v]) => ({ method, ...v }))
-    .sort((a, b) => b.total - a.total);
+    .sort((a, b) => b.totalAfterDiscount - a.totalAfterDiscount);
 }
 
 export interface ReportDiscountPart {
@@ -320,6 +326,16 @@ export function chargedTotal(detail: AnalyticsTransactionDetail): number {
   return net;
 }
 
+/** Bill before the discount. When no discount was used, this matches the amount collected. */
+export function grossBillTotal(detail: AnalyticsTransactionDetail): number {
+  const stored = roundReportMoney(Number(detail.total ?? detail.amount ?? 0));
+  const discount = discountAmount(detail);
+  const charged = chargedTotal(detail);
+  if (discount <= 0) return charged > 0 ? charged : stored;
+  const rebuilt = roundReportMoney(charged + discount);
+  return stored + 0.05 >= rebuilt ? stored : rebuilt;
+}
+
 export interface ReportGridRow {
   key: string;
   orderLabel: string;
@@ -334,7 +350,10 @@ export interface ReportGridRow {
   subtotal: number;
   serviceCharge: number;
   vat: number;
+  /** Bill before discount. */
   orderTotal: number;
+  /** Amount collected after the discount. */
+  totalAfterDiscount: number;
   tip: number;
   discountParts: ReportDiscountPart[];
   payment: string;
@@ -415,7 +434,8 @@ export function buildReportGridRows(details: AnalyticsTransactionDetail[]): Repo
     const subtotal = Number(d.subtotal ?? 0);
     const serviceCharge = Number(d.serviceCharge ?? 0);
     const vat = Number(d.vat ?? 0);
-    const orderTotal = chargedTotal(d);
+    const orderTotal = grossBillTotal(d);
+    const totalAfterDiscount = chargedTotal(d);
     const guests = Number(d.guestCount ?? d.covers ?? 1) || 1;
     const raw = d as unknown as Record<string, unknown>;
     const zoneLabel = String(
@@ -434,6 +454,7 @@ export function buildReportGridRows(details: AnalyticsTransactionDetail[]): Repo
       serviceCharge,
       vat,
       orderTotal,
+      totalAfterDiscount,
       tip: Number(d.tip ?? 0) || 0,
       discountParts: discountParts(d),
       payment: paymentMethodDisplay(d.method),
@@ -487,6 +508,7 @@ export function buildReportGridRows(details: AnalyticsTransactionDetail[]): Repo
         serviceCharge: isLast ? base.serviceCharge : 0,
         vat: isLast ? base.vat : 0,
         orderTotal: isLast ? base.orderTotal : 0,
+        totalAfterDiscount: isLast ? base.totalAfterDiscount : 0,
         tip: isLast ? base.tip : 0,
         discountParts: isLast ? base.discountParts : [],
         payment: isLast ? base.payment : '',
@@ -508,11 +530,12 @@ export function gridColumnTotals(rows: ReportGridRow[]) {
       if (r.serviceCharge > 0 || r.isOrderSummaryOnly) acc.serviceCharge += r.serviceCharge;
       if (r.vat > 0 || r.isOrderSummaryOnly) acc.vat += r.vat;
       if (r.orderTotal > 0 || r.isOrderSummaryOnly) acc.orderTotal += r.orderTotal;
+      if (r.totalAfterDiscount > 0 || r.isOrderSummaryOnly) acc.totalAfterDiscount += r.totalAfterDiscount;
       acc.tip += r.tip;
       acc.discount += r.discountParts.reduce((s, p) => s + p.amount, 0);
       return acc;
     },
-    { subtotal: 0, serviceCharge: 0, vat: 0, orderTotal: 0, tip: 0, discount: 0 },
+    { subtotal: 0, serviceCharge: 0, vat: 0, orderTotal: 0, totalAfterDiscount: 0, tip: 0, discount: 0 },
   );
 }
 
@@ -574,22 +597,25 @@ export function buildShopReportCsv(
   lines.push(csvRow(['Subtotal', moneyCsv(financial.subtotal)]));
   lines.push(csvRow(['Service Charge', moneyCsv(financial.serviceCharge)]));
   lines.push(csvRow(['VAT', moneyCsv(financial.vat)]));
-  lines.push(csvRow(['Tips', moneyCsv(financial.tips)]));
+  lines.push(csvRow(['Total', moneyCsv(financial.billTotal)]));
   lines.push(csvRow(['Discount', moneyCsv(financial.discount)]));
   lines.push(csvRow(['Total after discount', moneyCsv(financial.grandTotal)]));
+  lines.push(csvRow(['Tips', moneyCsv(financial.tips)]));
   lines.push('');
 
   lines.push(csvRow(['Payment Method Breakdown']));
-  lines.push(csvRow(['Payment Method', 'Orders', 'Total Amount']));
+  lines.push(csvRow(['Payment Method', 'Orders', 'Total', 'Total after discount']));
   let payOrders = 0;
+  let payBill = 0;
   let payTotal = 0;
   for (const r of paymentRows) {
-    lines.push(csvRow([r.method, r.orders, moneyCsv(r.total)]));
+    lines.push(csvRow([r.method, r.orders, moneyCsv(r.total), moneyCsv(r.totalAfterDiscount)]));
     payOrders += r.orders;
-    payTotal += r.total;
+    payBill += r.total;
+    payTotal += r.totalAfterDiscount;
   }
   if (paymentRows.length > 0) {
-    lines.push(csvRow(['TOTAL', payOrders, moneyCsv(payTotal)]));
+    lines.push(csvRow(['TOTAL', payOrders, moneyCsv(payBill), moneyCsv(payTotal)]));
   }
   lines.push('');
 
@@ -608,6 +634,7 @@ export function buildShopReportCsv(
       'Subtotal',
       'Service Charge',
       'VAT',
+      'Total',
       'Total after discount',
       'Tip',
       'Discount Type',
@@ -639,6 +666,7 @@ export function buildShopReportCsv(
         showFin ? moneyCsv(row.serviceCharge) : '',
         showFin ? moneyCsv(row.vat) : '',
         showFin ? moneyCsv(row.orderTotal) : '',
+        showFin ? moneyCsv(row.totalAfterDiscount) : '',
         showFin ? moneyCsv(row.tip) : '',
         row.discountParts.map((p) => p.type).join('\n'),
         row.discountParts.map((p) => moneyCsv(p.amount)).join('\n'),
@@ -666,6 +694,7 @@ export function buildShopReportCsv(
         moneyCsv(colTotals.serviceCharge),
         moneyCsv(colTotals.vat),
         moneyCsv(colTotals.orderTotal),
+        moneyCsv(colTotals.totalAfterDiscount),
         moneyCsv(colTotals.tip),
         '',
         moneyCsv(colTotals.discount),

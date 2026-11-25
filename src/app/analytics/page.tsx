@@ -119,6 +119,12 @@ interface ZoneSeriesPoint {
   [zoneKey: string]: string | number | undefined;
 }
 
+function money(amount: number): string {
+  const value = Number(amount);
+  const safe = Number.isFinite(value) ? value : 0;
+  return `$${safe.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function zoneSlug(zoneId: string): string {
   return `z_${String(zoneId).toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
 }
@@ -530,7 +536,7 @@ function MoneyTooltip({
         <p key={i} style={{ color: p.color }} className="font-medium">
           {p.name === 'revenue'
             ? `Revenue $${Number(p.value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-            : `${p.name} $${Number(p.value).toLocaleString()}`}
+            : `${p.name} ${money(Number(p.value))}`}
         </p>
       ))}
     </div>
@@ -555,7 +561,7 @@ function ZoneHourlyTooltip({
         <div key={p.name} className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-full" style={{ background: p.color }} />
           <span className="text-muted-foreground">{p.name}:</span>
-          <span className="font-medium text-foreground">${Number(p.value).toLocaleString()}</span>
+          <span className="font-medium text-foreground">{money(Number(p.value))}</span>
         </div>
       ))}
     </div>
@@ -938,9 +944,9 @@ export default function AnalyticsPage() {
         {/* KPI Cards — from summary totals */}
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
           {[
-            { label: 'Total Revenue', value: `$${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, sub: `${totalOrders} closed checks`, icon: <DollarSign size={16} />, color: '#06b6d4' },
-            { label: 'Avg Order Value', value: `$${avgOrderValue.toFixed(2)}`, sub: 'per closed check', icon: <TrendingUp size={16} />, color: '#10b981' },
-            { label: viewCopy.peakLabel, value: peakPoint.revenue > 0 ? (peakPoint.fullLabel || peakPoint.label) : '—', sub: `$${peakPoint.revenue.toLocaleString()}`, icon: <Clock size={16} />, color: '#f59e0b' },
+            { label: 'Total Revenue', value: money(totalRevenue), sub: `${totalOrders} closed checks`, icon: <DollarSign size={16} />, color: '#06b6d4' },
+            { label: 'Avg Order Value', value: money(avgOrderValue), sub: 'per closed check', icon: <TrendingUp size={16} />, color: '#10b981' },
+            { label: viewCopy.peakLabel, value: peakPoint.revenue > 0 ? (peakPoint.fullLabel || peakPoint.label) : '—', sub: money(peakPoint.revenue), icon: <Clock size={16} />, color: '#f59e0b' },
             { label: 'Total Covers', value: totalCovers.toString(), sub: 'guests served', icon: <Users size={16} />, color: '#a855f7' },
             { label: 'Active Tables', value: String(dashboard.activeTables ?? 0), sub: 'open now', icon: <MapPin size={16} />, color: '#ec4899' },
             { label: 'Awaiting Bill', value: String(dashboard.awaitingBill ?? 0), sub: 'ready to close', icon: <CreditCard size={16} />, color: '#64748b' },
@@ -965,7 +971,7 @@ export default function AnalyticsPage() {
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {viewCopy.subtitle}
                   {` · ${pickerRange.from === pickerRange.to ? pickerRange.from : `${pickerRange.from} → ${pickerRange.to}`}`}
-                  {peakPoint.revenue > 0 ? ` · peak ${peakPoint.fullLabel || peakPoint.label} · $${peakPoint.revenue.toLocaleString()}` : ''}
+                  {peakPoint.revenue > 0 ? ` · peak ${peakPoint.fullLabel || peakPoint.label} · ${money(peakPoint.revenue)}` : ''}
                 </p>
               </div>
               <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
@@ -1062,7 +1068,7 @@ export default function AnalyticsPage() {
                   {` · ${pickerRange.from === pickerRange.to
                     ? pickerRange.from
                     : `${pickerRange.from} → ${pickerRange.to}`}`}
-                  {zoneListTotal > 0 ? ` · $${zoneListTotal.toLocaleString()}` : ''}
+                  {zoneListTotal > 0 ? ` · ${money(zoneListTotal)}` : ''}
                   {loading ? ' · loading…' : ''}
                 </p>
               </div>
@@ -1087,7 +1093,7 @@ export default function AnalyticsPage() {
                       </div>
                       <div className="text-right">
                         <span className="text-xs md:text-sm font-semibold text-foreground">
-                          ${z.revenue.toLocaleString()}
+                          {money(z.revenue)}
                         </span>
                         <span className="text-xs text-muted-foreground ml-1.5 hidden sm:inline">
                           {z.orders} orders
@@ -1136,7 +1142,7 @@ export default function AnalyticsPage() {
                       {zoneViewCopy.subtitle}
                       {` · ${pickerRange.from === pickerRange.to ? pickerRange.from : `${pickerRange.from} → ${pickerRange.to}`}`}
                       {` · ${selectedZoneOrders} orders`}
-                      {selectedZoneTotal > 0 ? ` · $${selectedZoneTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : ''}
+                      {selectedZoneTotal > 0 ? ` · ${money(selectedZoneTotal)}` : ''}
                       {zonePeak.revenue > 0 ? ` · peak ${zonePeak.fullLabel || zonePeak.label}` : ''}
                       {zoneLoading ? ' · loading…' : ''}
                     </p>
@@ -1254,7 +1260,7 @@ export default function AnalyticsPage() {
                       >
                         <span className="w-2 h-2 rounded-sm" style={{ background: l.color }} />
                         {l.zone}
-                        <span className="text-foreground/70">${total.toLocaleString()}</span>
+                        <span className="text-foreground/70">{money(total)}</span>
                       </button>
                     );
                   })}
@@ -1329,7 +1335,7 @@ export default function AnalyticsPage() {
                         <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: catColor }} />
                       </div>
                     </div>
-                    <span className="text-xs text-muted-foreground w-14 text-right">${item.revenue.toLocaleString()}</span>
+                    <span className="text-xs text-muted-foreground w-16 text-right">{money(item.revenue)}</span>
                   </div>
                 );
               })}
@@ -1364,7 +1370,7 @@ export default function AnalyticsPage() {
                       ))}
                     </Pie>
                     <Tooltip
-                      formatter={(value: number) => [`$${Number(value).toLocaleString()}`, '']}
+                      formatter={(value: number) => [money(Number(value)), '']}
                       contentStyle={{
                         background: 'rgba(15,23,42,0.95)',
                         border: '1px solid rgba(100,116,139,0.2)',
@@ -1383,7 +1389,7 @@ export default function AnalyticsPage() {
                       </div>
                       <div className="text-right">
                         <span className="text-xs font-semibold text-foreground">
-                          ${Number(p.value).toLocaleString()}
+                          {money(Number(p.value))}
                         </span>
                         <span className="text-xs text-muted-foreground ml-1.5">
                           {totalPayments > 0 ? Math.round((Number(p.value) / totalPayments) * 100) : 0}%
@@ -1422,12 +1428,12 @@ export default function AnalyticsPage() {
                     </div>
                     <div>
                       <p className="text-[10px] text-muted-foreground">Revenue</p>
-                      <p className="text-xs font-semibold text-foreground">${zone.revenue.toLocaleString()}</p>
+                      <p className="text-xs font-semibold text-foreground">{money(zone.revenue)}</p>
                     </div>
                     <div>
                       <p className="text-[10px] text-muted-foreground">Rev/Turn</p>
                       <p className="text-xs font-semibold text-foreground">
-                        ${zone.turns > 0 ? Math.round(zone.revenue / zone.turns).toLocaleString() : '0'}
+                        {zone.turns > 0 ? money(zone.revenue / zone.turns) : money(0)}
                       </p>
                     </div>
                   </div>
@@ -1487,8 +1493,8 @@ export default function AnalyticsPage() {
                       </span>
                     </td>
                     <td className="py-3 pr-4 font-semibold text-foreground">{s.orders}</td>
-                    <td className="py-3 pr-4 font-semibold text-foreground">${s.revenue.toLocaleString()}</td>
-                    <td className="py-3 pr-4 text-muted-foreground">${s.avgOrderValue.toFixed(2)}</td>
+                    <td className="py-3 pr-4 font-semibold text-foreground">{money(s.revenue)}</td>
+                    <td className="py-3 pr-4 text-muted-foreground">{money(s.avgOrderValue)}</td>
                     <td className="py-3 pr-4 text-muted-foreground">{s.covers}</td>
                   </tr>
                 ))}

@@ -590,6 +590,7 @@ export default function ReportsPage() {
 
       <style jsx global>{`
         @media print {
+          @page { size: A4 landscape; margin: 8mm; }
           .print\\:hidden { display: none !important; }
           body { background: white !important; color: black !important; }
           main { max-width: none !important; padding: 0 !important; }
@@ -597,6 +598,17 @@ export default function ReportsPage() {
             box-shadow: none !important;
             border: none !important;
             border-radius: 0 !important;
+          }
+          .skybar-shop-report table { width: 100%; border-collapse: collapse; }
+          .skybar-shop-report thead { display: table-header-group; }
+          .skybar-shop-report tr { break-inside: avoid; page-break-inside: avoid; }
+          .report-detail-table { min-width: 0 !important; }
+          .report-detail-table th,
+          .report-detail-table td {
+            font-size: 7px !important;
+            line-height: 1.15 !important;
+            padding: 1px 3px !important;
+            white-space: normal !important;
           }
         }
       `}</style>

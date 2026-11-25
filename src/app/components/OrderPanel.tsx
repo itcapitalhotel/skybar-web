@@ -498,7 +498,7 @@ export default function OrderPanel({
                 disabled={increaseSaving || !increaseQty || Number(increaseQty) < 1}
                 className="flex-1 py-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-semibold hover:bg-emerald-500/25 disabled:opacity-40"
               >
-                {increaseSaving ? 'Sending…' : 'Send to kitchen'}
+                {increaseSaving ? 'Confirming…' : 'CONFIRM'}
               </button>
             </div>
           </form>
