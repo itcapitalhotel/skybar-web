@@ -9,6 +9,8 @@ export interface TableData {
   zone: string;
   status: TableStatus;
   guests: number;
+  orderTypeId?: string;
+  orderTypeName?: string;
   capacity: number;
   staff: string;
   seatedMinutes: number;

@@ -324,6 +324,9 @@ export default function OrderDetailModal({
                 {txn.zoneLabel && (
                   <InfoChip icon={<MapPin size={12} />} label="Zone" value={txn.zoneLabel} />
                 )}
+                {txn.orderTypeName ? (
+                  <InfoChip icon={<Receipt size={12} />} label="Order type" value={txn.orderTypeName} />
+                ) : null}
                 {(txn.guestCount != null || txn.covers != null) && (
                   <InfoChip
                     icon={<Users size={12} />}

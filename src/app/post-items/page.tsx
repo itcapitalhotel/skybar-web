@@ -9,6 +9,7 @@ import {
   Star, Eye, EyeOff, RefreshCw, Tag, Layers,
 } from 'lucide-react';
 import { menuApi, menuCategoryApi } from '@/lib/api/client';
+import { compareMenuItemId } from '@/lib/api/mappers';
 import { useAuthRole } from '@/hooks/useAuthUser';
 import type { ApiMenuItem, MenuCategory, MenuCategoryType, MenuItemSize } from '@/lib/api/types';
 import {
@@ -167,7 +168,7 @@ export default function PostItemsPage() {
       (item.description?.toLowerCase().includes(q) ?? false);
     const matchCategory = filterCategory === 'All' || item.categoryId === filterCategory;
     return matchSearch && matchCategory;
-  });
+  }).sort((a, b) => compareMenuItemId(a.id, b.id));
 
   const openCreate = () => {
     setEditingItem(null);
@@ -423,6 +424,7 @@ export default function PostItemsPage() {
                 <div className="flex flex-col md:flex-row md:items-start gap-3 md:gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="text-xs font-semibold tabular-nums text-muted-foreground">{item.id}</span>
                       <h3 className="font-semibold text-sm md:text-base text-foreground">{item.name}</h3>
                       <span
                         className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border"

@@ -1,6 +1,19 @@
 import type { ApiMenuItem, MenuItem, ZoneData } from './types';
 import type { ZoneMeta } from '@/app/components/floorData';
 
+/** Menu ids are numbers stored as text ("1", "2", "10"). Compare the number so 2 stays before 10. */
+export function compareMenuItemId(
+  a: string | number | null | undefined,
+  b: string | number | null | undefined,
+): number {
+  const aText = String(a ?? '').trim();
+  const bText = String(b ?? '').trim();
+  const aNum = /^\d+$/.test(aText) ? Number(aText) : Number.POSITIVE_INFINITY;
+  const bNum = /^\d+$/.test(bText) ? Number(bText) : Number.POSITIVE_INFINITY;
+  if (aNum !== bNum) return aNum - bNum;
+  return aText.localeCompare(bText, undefined, { numeric: true, sensitivity: 'base' });
+}
+
 export function mapMenuItem(item: ApiMenuItem): MenuItem {
   const defaultPrice = item.sizes?.[0]?.price ?? 0;
   const slug = item.category ?? item.categoryId;
@@ -19,7 +32,10 @@ export function mapMenuItem(item: ApiMenuItem): MenuItem {
 }
 
 export function mapMenuItems(items: ApiMenuItem[]): MenuItem[] {
-  return items.filter(i => i.available !== false).map(mapMenuItem);
+  return items
+    .filter(i => i.available !== false)
+    .map(mapMenuItem)
+    .sort((a, b) => compareMenuItemId(a.id, b.id));
 }
 
 export function zoneToMeta(zone: ZoneData): ZoneMeta {

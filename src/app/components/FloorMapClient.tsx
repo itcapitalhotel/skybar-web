@@ -60,6 +60,8 @@ function sameTableRecord(a: TableData, b: TableData): boolean {
     && a.zone === b.zone
     && a.status === b.status
     && a.guests === b.guests
+    && (a.orderTypeId ?? '') === (b.orderTypeId ?? '')
+    && (a.orderTypeName ?? '') === (b.orderTypeName ?? '')
     && a.capacity === b.capacity
     && a.staff === b.staff
     && a.seatedMinutes === b.seatedMinutes
@@ -95,6 +97,8 @@ function apiTableToLocal(t: ApiTableData, zones: ZoneData[] = []): TableData {
     zone: matched?.id ?? rawZone,
     status: t.status as TableData['status'],
     guests: t.guestCount ?? t.guests ?? 0,
+    orderTypeId: t.orderTypeId,
+    orderTypeName: t.orderTypeName,
     capacity: t.capacity,
     staff: t.staff,
     seatedMinutes: t.seatedMinutes,
@@ -285,6 +289,23 @@ export default function FloorMapClient() {
       if (guestCount != null && guestCount > 0) {
         syncTableGuestCount(tableId, guestCount);
       }
+      if (order.orderTypeId || order.orderTypeName) {
+        setTables((prev) => prev.map((t) => (
+          t.id === tableId
+            ? { ...t, orderTypeId: order.orderTypeId, orderTypeName: order.orderTypeName }
+            : t
+        )));
+        setSelectedTable((prev) => (
+          prev?.id === tableId
+            ? { ...prev, orderTypeId: order.orderTypeId, orderTypeName: order.orderTypeName }
+            : prev
+        ));
+        setMenuTable((prev) => (
+          prev?.id === tableId
+            ? { ...prev, orderTypeId: order.orderTypeId, orderTypeName: order.orderTypeName }
+            : prev
+        ));
+      }
       setTableOrderNotes(prev => ({ ...prev, [tableId]: order.note?.trim() ?? '' }));
     } catch {
       setTableOrders(prev => ({ ...prev, [tableId]: [] }));
@@ -357,9 +378,17 @@ export default function FloorMapClient() {
                 if (!patch) return t;
                 const guests = patch.guests ?? t.guests;
                 const orderTotal = patch.orderTotal ?? t.orderTotal;
-                if (t.status === patch.status && t.guests === guests && t.orderTotal === orderTotal) return t;
+                const cleared = patch.status === 'available';
+                const orderTypeId = cleared ? undefined : t.orderTypeId;
+                const orderTypeName = cleared ? undefined : t.orderTypeName;
+                if (
+                  t.status === patch.status
+                  && t.guests === guests
+                  && t.orderTotal === orderTotal
+                  && t.orderTypeId === orderTypeId
+                ) return t;
                 changed = true;
-                return { ...t, status: patch.status, guests, orderTotal };
+                return { ...t, status: patch.status, guests, orderTotal, orderTypeId, orderTypeName };
               });
               return changed ? next : prev;
             });
@@ -450,13 +479,14 @@ export default function FloorMapClient() {
 
   // ── Update table status via API ────────────────────────────────────────────
   const updateTableStatus = useCallback(
-    async (tableId: string, status: ApiTableData['status'], guestCount?: number) => {
+    async (tableId: string, status: ApiTableData['status'], guestCount?: number, orderTypeId?: string) => {
       try {
         const staffId = getStaffIdForOrder();
         await tablesApi.updateStatus(tableId, {
           status,
           ...(guestCount != null ? { guestCount } : {}),
           ...(staffId ? { staff: staffId } : {}),
+          ...(orderTypeId ? { orderTypeId } : {}),
         });
       } catch {
         // optimistic update already applied
@@ -497,13 +527,72 @@ export default function FloorMapClient() {
     await fetchOrderForTable(tableId);
   };
 
-  const handleUpdateItemQty = async (itemId: string, qty: number) => {
+  const handleIncreaseItem = async (item: OrderItem, addQty: number) => {
     if (!selectedTable) return;
     const tableId = selectedTable.id;
+    const qty = Math.floor(addQty);
+    if (!Number.isFinite(qty) || qty < 1) {
+      throw new Error('Enter a quantity of at least 1');
+    }
+    const menuItemId = item.menuItemId;
+    if (!menuItemId) {
+      throw new Error('This item cannot be sent to the kitchen again');
+    }
+    const staffId = getStaffIdForOrder();
+    if (!staffId) {
+      throw new Error('Sign in again to send the order');
+    }
+    const guestCount = resolveGuestCountForTable(tableId);
+    const orderTypeId = (
+      tables.find((tbl) => tbl.id === tableId)?.orderTypeId
+      ?? (selectedTable.id === tableId ? selectedTable.orderTypeId : undefined)
+    );
+    const result = await ordersApi.addItems(tableId, {
+      staff: staffId,
+      guestCount,
+      ...(orderTypeId ? { orderTypeId } : {}),
+      items: [{
+        menuItemId,
+        name: item.name,
+        qty,
+        unitPrice: item.unitPrice,
+        ...(item.categoryId ? { categoryId: item.categoryId } : {}),
+        ...(item.size ? { size: item.size } : {}),
+        ...(item.notes?.trim() ? { note: item.notes.trim() } : {}),
+      }],
+    });
+    if (result.orderId) {
+      setTableOrderIds((prev) => ({ ...prev, [tableId]: String(result.orderId) }));
+    }
+    const jobs = result.kitchenPrintJobs ?? result.categoryPrintJobs;
+    const printJobs = jobs?.length ?? 0;
+    if (printJobs > 0) {
+      toast.success(`Sent ${qty} to the kitchen`);
+    } else {
+      toast.success(`Added ${qty} · kitchen ticket was not queued`);
+    }
+    await fetchOrderForTable(tableId);
+  };
+
+  const handleDecreaseItem = async (itemId: string, qty: number, reason: string) => {
+    if (!selectedTable) return;
+    const tableId = selectedTable.id;
+    const staff = getStaffIdForOrder();
+    const trimmed = reason.trim();
+    const cancelQty = Math.floor(qty);
+    if (!trimmed) {
+      throw new Error('Enter a reason to decrease this item');
+    }
+    if (!Number.isFinite(cancelQty) || cancelQty < 1) {
+      throw new Error('Enter a quantity of at least 1');
+    }
+    if (!staff) {
+      throw new Error('Sign in again to decrease an item');
+    }
     if (!itemId || itemId.startsWith('item-')) {
       throw new Error('This item is not saved on the order yet');
     }
-    await ordersApi.updateItem(tableId, itemId, { qty });
+    await ordersApi.voidItem(tableId, itemId, { reason: trimmed, staff, qty: cancelQty });
     await fetchOrderForTable(tableId);
   };
 
@@ -520,6 +609,11 @@ export default function FloorMapClient() {
   const handleClearTable = async () => {
     if (!selectedTable) return;
     const tableId = selectedTable.id;
+    const hasOrder = (tableOrders[tableId] ?? []).some((item) => item.status !== 'Voided');
+    if (hasOrder) {
+      toast.error('This table has an order, so it cannot be cleared');
+      return;
+    }
     try {
       await ordersApi.clear(tableId);
       await updateTableStatus(tableId, 'available', 0);
@@ -575,11 +669,17 @@ export default function FloorMapClient() {
       throw new Error('Sign in again to send the order');
     }
     const guestCount = resolveGuestCountForTable(tableId);
+    const orderTypeId = (
+      tables.find((tbl) => tbl.id === tableId)?.orderTypeId
+      ?? (selectedTable?.id === tableId ? selectedTable.orderTypeId : undefined)
+      ?? (menuTable?.id === tableId ? menuTable.orderTypeId : undefined)
+    );
     const sharedNote = orderNote?.trim() ?? '';
     try {
       const result = await ordersApi.addItems(tableId, {
         staff: staffId,
         guestCount,
+        ...(orderTypeId ? { orderTypeId } : {}),
         ...(sharedNote ? { note: sharedNote } : {}),
         items: newItems.map(i => {
           const lineNote = i.notes?.trim() ?? '';
@@ -652,14 +752,15 @@ export default function FloorMapClient() {
     }
   };
 
-  const handleGuestInfoConfirm = (guestCount: number, note: string) => {
+  const handleGuestInfoConfirm = (guestCount: number, note: string, orderTypeId: string, orderTypeName: string) => {
     if (!guestInfoTable) return;
     setPendingGuestCount(guestCount);
     setTableNote(note);
-    setTables(prev => prev.map(t => t.id === guestInfoTable.id ? { ...t, guests: guestCount } : t));
-    setMenuTable({ ...guestInfoTable, guests: guestCount });
+    const seated = { ...guestInfoTable, guests: guestCount, orderTypeId, orderTypeName };
+    setTables(prev => prev.map(t => t.id === guestInfoTable.id ? seated : t));
+    setMenuTable(seated);
     setGuestInfoTable(null);
-    void updateTableStatus(guestInfoTable.id, 'occupied', guestCount);
+    void updateTableStatus(guestInfoTable.id, 'occupied', guestCount, orderTypeId);
   };
 
   // Open menu for an already-occupied table to add more items
@@ -1041,7 +1142,8 @@ export default function FloorMapClient() {
                   items={currentItems}
                   role={role}
                   onVoidItem={handleVoidItem}
-                  onUpdateQty={handleUpdateItemQty}
+                  onIncreaseItem={handleIncreaseItem}
+                  onDecreaseItem={handleDecreaseItem}
                   onUpdateNote={handleUpdateItemNote}
                   onOpenSplit={() => setSplitOpen(true)}
                   onOpenTransfer={() => setTransferOpen(true)}

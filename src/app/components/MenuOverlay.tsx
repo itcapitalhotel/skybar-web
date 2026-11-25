@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { TableData, OrderItem } from './floorData';
 import { menuApi } from '@/lib/api/client';
+import { compareMenuItemId } from '@/lib/api/mappers';
 import type { MenuItem, MenuCategory } from '@/lib/api/types';
 import { toast } from 'sonner';
 
@@ -153,18 +154,26 @@ export default function MenuOverlay({
     };
   }, []);
 
-  const filteredItems = useMemo(
-    () =>
-      menuItems.filter((item) => {
+  const sortedCategories = useMemo(
+    () => [...categories].sort((a, b) => {
+      const order = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+      return order !== 0 ? order : a.label.localeCompare(b.label);
+    }),
+    [categories],
+  );
+
+  const filteredItems = useMemo(() => {
+    return menuItems
+      .filter((item) => {
         const matchCat =
           activeCategory === 'All'
           || item.categoryId === activeCategory
           || item.category === activeCategory;
         const matchSearch = !search || item.name.toLowerCase().includes(search.toLowerCase());
         return matchCat && matchSearch;
-      }),
-    [menuItems, activeCategory, search],
-  );
+      })
+      .sort((a, b) => compareMenuItemId(a.id, b.id));
+  }, [menuItems, activeCategory, search]);
 
   const cartSummary = useMemo(() => {
     const lines = cart.length;
@@ -277,6 +286,7 @@ export default function MenuOverlay({
             </h3>
             <p className="text-xs text-muted-foreground">
               {showAll ? 'Adding to open check' : 'New check'}
+              {table.orderTypeName ? ` · ${table.orderTypeName}` : ''}
               {tableNote ? ` · Table note: ${tableNote}` : ''}
             </p>
           </div>
@@ -319,7 +329,7 @@ export default function MenuOverlay({
                   >
                     All
                   </button>
-                  {categories.map((cat) => (
+                  {sortedCategories.map((cat) => (
                     <button
                       key={cat.id}
                       type="button"
@@ -363,7 +373,10 @@ export default function MenuOverlay({
                             </span>
                           ) : null}
                         </div>
-                        <p className="text-sm font-medium text-foreground leading-snug break-words">{item.name}</p>
+                        <p className="text-sm font-medium text-foreground leading-snug break-words">
+                          <span className="text-muted-foreground tabular-nums mr-1">{item.id}</span>
+                          {item.name}
+                        </p>
                         {!multiSize && item.sizes?.[0]?.label ? (
                           <p className="text-[10px] text-muted-foreground mt-0.5">{item.sizes[0].label}</p>
                         ) : null}

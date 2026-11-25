@@ -12,7 +12,8 @@ import ReopenOrderDialog from '@/app/reports/ReopenOrderDialog';
 import SkyBarShopReport from '@/app/reports/SkyBarShopReport';
 import { buildMenuCategoryLookup, buildShopReportCsv } from '@/app/reports/reportDocumentHelpers';
 import DateRangePicker, { todayRange } from '@/components/DateRangePicker';
-import { analyticsApi, menuApi, menuCategoryApi, tablesApi, zonesApi } from '@/lib/api/client';
+import { toast } from 'sonner';
+import { analyticsApi, configApi, menuApi, menuCategoryApi, tablesApi, zonesApi } from '@/lib/api/client';
 import type { MenuCategoryLookup, ReportGridRow } from '@/app/reports/reportDocumentHelpers';
 import {
   ensureStaffNameCache,
@@ -144,10 +145,14 @@ export default function ReportsPage() {
   const [orderRows, setOrderRows] = useState<OrderReportRow[]>([]);
   const [orderDetails, setOrderDetails] = useState<AnalyticsTransactionDetail[]>([]);
   const [menuLookup, setMenuLookup] = useState<MenuCategoryLookup | undefined>(undefined);
-  const [reportGeneratedAt, setReportGeneratedAt] = useState(() => new Date());
+  const [reportGeneratedAt, setReportGeneratedAt] = useState<number | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [detailRow, setDetailRow] = useState<OrderReportRow | null>(null);
   const [updateRow, setUpdateRow] = useState<ReportGridRow | null>(null);
+  const [zones, setZones] = useState<ZoneData[]>([]);
+  const [printZoneId, setPrintZoneId] = useState('');
+  const [reportPrinter, setReportPrinter] = useState({ name: '', ip: '', port: '9100' });
+  const [printingLong, setPrintingLong] = useState(false);
 
   const loadReport = useCallback(async () => {
     setLoading(true);
@@ -186,7 +191,7 @@ export default function ReportsPage() {
       const orders = transactions.map(normalizeOrderRow);
       setStaffRows(perf.map(staffRow));
       setOrderRows(orders);
-      setReportGeneratedAt(new Date());
+      setReportGeneratedAt(Date.now());
 
       try {
         const [categories, menuItems] = await Promise.all([
@@ -274,6 +279,24 @@ export default function ReportsPage() {
     void loadReport();
   }, [loadReport]);
 
+  useEffect(() => {
+    let cancelled = false;
+    configApi.get()
+      .then((config) => {
+        if (cancelled) return;
+        setReportPrinter({
+          name: config.reportPrinterName ?? '',
+          ip: config.reportPrinterIp ?? '',
+          port: String(config.reportPrinterPort ?? 9100),
+        });
+      })
+      .catch(() => { /* print stays blocked until a printer IP is saved */ });
+    zonesApi.list()
+      .then((list) => { if (!cancelled) setZones(list); })
+      .catch(() => { if (!cancelled) setZones([]); });
+    return () => { cancelled = true; };
+  }, []);
+
   const cashiers = useMemo(
     () => ['All', ...Array.from(new Set([...staffRows.map((r) => r.name), ...orderRows.map((r) => r.staff)]))],
     [staffRows, orderRows],
@@ -310,7 +333,13 @@ export default function ReportsPage() {
   };
 
   const handleExcel = () => {
-    const csv = buildShopReportCsv(filteredOrderDetails, dateFrom, dateTo, reportGeneratedAt, menuLookup);
+    const csv = buildShopReportCsv(
+      filteredOrderDetails,
+      dateFrom,
+      dateTo,
+      new Date(reportGeneratedAt ?? Date.now()),
+      menuLookup,
+    );
     const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -321,6 +350,36 @@ export default function ReportsPage() {
   };
 
   const handlePrint = () => window.print();
+
+  const handlePrintLongReport = async () => {
+    if (printingLong) return;
+    const printerIp = reportPrinter.ip.trim();
+    if (!printerIp) {
+      toast.error('Add the long report printer IP in Admin Config first.');
+      return;
+    }
+    const port = Number(reportPrinter.port) || 9100;
+    setPrintingLong(true);
+    try {
+      const result = await analyticsApi.printLongReport({
+        printerName: reportPrinter.name.trim() || undefined,
+        printerIp,
+        printerPort: port,
+        from: dateFrom,
+        to: dateTo,
+        zoneId: printZoneId || undefined,
+      });
+      if (result.printed) {
+        toast.success(result.message || 'Long report sent to printer');
+      } else {
+        toast.error(result.message || 'The long report did not print');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not print the long report');
+    } finally {
+      setPrintingLong(false);
+    }
+  };
 
   if (locked) {
     return <LockModal isOpen={lockOpen} onClose={() => { setLockOpen(false); setLocked(false); }} onUnlock={() => { setLockOpen(false); setLocked(false); }} />;
@@ -343,6 +402,11 @@ export default function ReportsPage() {
             <p className="text-sm text-muted-foreground mt-0.5">
               Summary, payment breakdown, and line-item detail — print or export for accounting.
             </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {reportPrinter.ip
+                ? `Long report prints to ${reportPrinter.name ? `${reportPrinter.name} · ` : ''}${reportPrinter.ip}:${reportPrinter.port || 9100}`
+                : 'Long report printer is not set. Add the printer IP in Admin Config.'}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -361,6 +425,15 @@ export default function ReportsPage() {
               Print
             </button>
             <button
+              onClick={() => void handlePrintLongReport()}
+              disabled={printingLong}
+              title={reportPrinter.ip ? `Sends the long tape to ${reportPrinter.ip}:${reportPrinter.port || 9100}` : 'Set the printer IP in Admin Config'}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/25 text-xs font-semibold transition-all disabled:opacity-50"
+            >
+              <Receipt size={14} />
+              {printingLong ? 'Printing…' : 'Print long report'}
+            </button>
+            <button
               onClick={handleExcel}
               disabled={loading || loadingDetails}
               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25 text-xs font-semibold transition-all disabled:opacity-50"
@@ -375,6 +448,17 @@ export default function ReportsPage() {
         <div className="glass-card rounded-xl border border-border p-4 print:hidden">
           <div className="flex flex-wrap items-end gap-3">
             <DateRangePicker value={dateRange} onChange={setDateRange} />
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-muted-foreground font-medium">Long report zone</label>
+              <select
+                value={printZoneId}
+                onChange={e => setPrintZoneId(e.target.value)}
+                className="field-input w-auto min-w-[9rem]"
+              >
+                <option value="">All zones</option>
+                {zones.map(z => <option key={z.id} value={z.id}>{z.label}</option>)}
+              </select>
+            </div>
             {/* Cashier Filter */}
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground font-medium">Cashier</label>

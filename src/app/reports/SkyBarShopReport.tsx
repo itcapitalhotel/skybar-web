@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Eye, Printer, RotateCcw } from 'lucide-react';
 import type { AnalyticsTransactionDetail } from '@/lib/api/types';
 import { receiptsApi } from '@/lib/api/client';
@@ -67,7 +67,8 @@ function SummaryMetricRow({
 interface SkyBarShopReportProps {
   dateFrom: string;
   dateTo: string;
-  generatedAt: Date;
+  /** Epoch ms when the report was loaded; formatted only after mount to avoid hydration mismatch. */
+  generatedAt: number | null;
   orderDetails: AnalyticsTransactionDetail[];
   menuLookup?: MenuCategoryLookup;
   loading?: boolean;
@@ -97,11 +98,29 @@ export default function SkyBarShopReport({
   );
   const paymentOrdersTotal = paymentRows.reduce((s, r) => s + r.orders, 0);
   const paymentAmountTotal = paymentRows.reduce((s, r) => s + r.total, 0);
+  const orderTypeRows = (() => {
+    const map = new Map<string, { checks: number; guests: number; total: number }>();
+    for (const detail of orderDetails) {
+      const name = detail.orderTypeName?.trim() || '—';
+      const row = map.get(name) ?? { checks: 0, guests: 0, total: 0 };
+      row.checks += 1;
+      row.guests += Number(detail.guestCount ?? detail.covers ?? 0) || 0;
+      row.total += Number(detail.total ?? detail.amount ?? 0);
+      map.set(name, row);
+    }
+    return Array.from(map, ([name, row]) => ({ name, ...row }));
+  })();
 
-  const generatedStamp = generatedAt.toLocaleString('en-US', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
+  const [generatedStamp, setGeneratedStamp] = useState('—');
+  useEffect(() => {
+    if (generatedAt == null) {
+      setGeneratedStamp('—');
+      return;
+    }
+    setGeneratedStamp(
+      new Date(generatedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }),
+    );
+  }, [generatedAt]);
   const rangeLabel = `${formatReportDateLabel(dateFrom)} — ${formatReportDateLabel(dateTo)}`;
   const categoryLineTotal = categorySales.food + categorySales.drink;
 
@@ -122,7 +141,9 @@ export default function SkyBarShopReport({
             <p>
               <span className="text-gray-400 uppercase tracking-wide text-[9px]">Generated</span>
               <br />
-              <span className="text-gray-800 font-medium">{generatedStamp}</span>
+              <span className="text-gray-800 font-medium" suppressHydrationWarning>
+                {generatedStamp}
+              </span>
             </p>
             <p className="mt-2 tabular-nums">
               {totalOrders} closed {totalOrders === 1 ? 'check' : 'checks'}
@@ -234,6 +255,38 @@ export default function SkyBarShopReport({
         </section>
 
         <section>
+          <h2 className={sectionTitle}>Order type</h2>
+          <table className="w-full max-w-lg border-collapse">
+            <thead>
+              <tr>
+                <th className={th}>Type</th>
+                <th className={`${th} text-right`}>Checks</th>
+                <th className={`${th} text-right`}>Guests</th>
+                <th className={`${th} text-right`}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orderTypeRows.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className={`${td} text-center text-gray-500 py-4`}>
+                    {loading ? 'Loading…' : 'No checks in range'}
+                  </td>
+                </tr>
+              ) : (
+                orderTypeRows.map((row) => (
+                  <tr key={row.name}>
+                    <td className={td}>{row.name}</td>
+                    <td className={tdNum}>{row.checks}</td>
+                    <td className={tdNum}>{row.guests}</td>
+                    <td className={tdNum}>{formatReportMoney(row.total)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </section>
+
+        <section>
           <h2 className={sectionTitle}>Transaction detail</h2>
           <div className="-mx-2">
             <table className="w-full min-w-[1560px] border-collapse">
@@ -243,6 +296,7 @@ export default function SkyBarShopReport({
                     'Order ID',
                     'Table',
                     'Zone',
+                    'Order Type',
                     'Guests',
                     'Items',
                     'Qty',
@@ -274,13 +328,13 @@ export default function SkyBarShopReport({
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={onViewOrder ? 22 : 21} className={`${td} text-center py-8 text-gray-500`}>
+                    <td colSpan={onViewOrder ? 23 : 22} className={`${td} text-center py-8 text-gray-500`}>
                       Loading line items…
                     </td>
                   </tr>
                 ) : gridRows.length === 0 ? (
                   <tr>
-                    <td colSpan={onViewOrder ? 22 : 21} className={`${td} text-center py-8 text-gray-500`}>
+                    <td colSpan={onViewOrder ? 23 : 22} className={`${td} text-center py-8 text-gray-500`}>
                       No transactions for the selected range.
                     </td>
                   </tr>
@@ -291,7 +345,7 @@ export default function SkyBarShopReport({
                 )}
                 {gridRows.length > 0 && !loading ? (
                   <tr className="bg-gray-50">
-                    <td className={`${td} font-semibold text-gray-800`} colSpan={8}>
+                    <td className={`${td} font-semibold text-gray-800`} colSpan={9}>
                       Column totals
                     </td>
                     <td className={tdNum}>{formatReportMoney(colTotals.subtotal)}</td>
@@ -354,6 +408,7 @@ function ReportGridRowView({
       <td className={`${td} font-medium whitespace-nowrap`}>{row.orderLabel}</td>
       <td className={td}>{row.tableLabel}</td>
       <td className={`${td} whitespace-nowrap`}>{row.zoneLabel || '—'}</td>
+      <td className={`${td} whitespace-nowrap`}>{row.orderTypeName || '—'}</td>
       <td className={`${td} text-center`}>{row.guests}</td>
       <td className={`${td} ${itemCol}`}>
         <span className="line-clamp-2 leading-snug break-words" title={row.itemName}>

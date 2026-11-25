@@ -289,6 +289,7 @@ export interface ReportGridRow {
   orderLabel: string;
   tableLabel: string;
   zoneLabel: string;
+  orderTypeName: string;
   guests: number;
   itemName: string;
   qty: number;
@@ -361,9 +362,19 @@ function mergeLineItemsForReport(items: OrderItem[]): {
   return Array.from(map.values());
 }
 
+function compareOrderId(a: string, b: string): number {
+  const left = a.trim();
+  const right = b.trim();
+  if (!left && !right) return 0;
+  if (!left) return 1;
+  if (!right) return -1;
+  return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
+}
+
 export function buildReportGridRows(details: AnalyticsTransactionDetail[]): ReportGridRow[] {
+  const ordered = [...details].sort((a, b) => compareOrderId(a.orderId ?? '', b.orderId ?? ''));
   const rows: ReportGridRow[] = [];
-  for (const d of details) {
+  for (const d of ordered) {
     const items = orderItems(d);
     const subtotal = Number(d.subtotal ?? 0);
     const serviceCharge = Number(d.serviceCharge ?? 0);
@@ -374,10 +385,14 @@ export function buildReportGridRows(details: AnalyticsTransactionDetail[]): Repo
     const zoneLabel = String(
       d.zoneLabel ?? raw.zone_label ?? raw.zone ?? '',
     ).trim() || '—';
+    const orderTypeName = String(
+      d.orderTypeName ?? raw.order_type_name ?? '',
+    ).trim() || '—';
     const base = {
       orderLabel: shortOrderLabel(d),
       tableLabel: d.tableLabel || 'N/A',
       zoneLabel,
+      orderTypeName,
       guests,
       subtotal: subtotal || orderTotal,
       serviceCharge,
@@ -547,6 +562,7 @@ export function buildShopReportCsv(
       'Order ID',
       'Table',
       'Zone',
+      'Order Type',
       'Guests',
       'Items',
       'Qty',
@@ -576,6 +592,7 @@ export function buildShopReportCsv(
         row.orderLabel,
         row.tableLabel,
         row.zoneLabel,
+        row.orderTypeName,
         row.guests,
         row.itemName,
         row.qty || '',

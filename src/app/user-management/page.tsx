@@ -95,12 +95,12 @@ export default function UserManagementPage() {
       return;
     }
     const credential = form.password.trim();
-    if (!editingUser && credential.length < 4) {
-      showToast('Enter a 4-digit PIN (or password, min 4 characters)', 'error');
+    if (!editingUser && !/^\d{4,6}$/.test(credential)) {
+      showToast('Enter a 4 to 6 digit PIN. That is what the login screen accepts.', 'error');
       return;
     }
-    if (editingUser && credential && credential.length < 4) {
-      showToast('PIN / password must be at least 4 characters', 'error');
+    if (editingUser && credential && !/^\d{4,6}$/.test(credential)) {
+      showToast('The new login PIN must be 4 to 6 digits.', 'error');
       return;
     }
 
@@ -472,8 +472,10 @@ export default function UserManagementPage() {
                   <input
                     type={showPassword ? 'text' : 'password'}
                     value={form.password}
-                    onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                    placeholder={editingUser ? 'Leave blank to keep current' : '4-digit PIN (used on POS login)'}
+                    onChange={e => setForm(f => ({ ...f, password: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder={editingUser ? 'Leave blank to keep the current PIN' : '4 to 6 digit PIN'}
                     className="w-full px-4 py-3 pr-10 rounded-xl text-sm text-foreground placeholder:text-muted-foreground outline-none transition-all"
                     style={{ background: 'rgba(30,41,59,0.6)', border: '1px solid rgba(100,116,139,0.2)' }}
                   />
@@ -486,7 +488,7 @@ export default function UserManagementPage() {
                   </button>
                 </div>
                 <p className="text-[11px] text-muted-foreground mt-1.5">
-                  POS login uses this as both Staff PIN and password — prefer a 4-digit PIN.
+                  The login screen uses this PIN. It must be 4 to 6 digits.
                 </p>
               </div>
             </div>

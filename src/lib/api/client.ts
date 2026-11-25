@@ -1,5 +1,5 @@
 import { clearAuthToken, getApiBaseUrl, getAuthToken } from './config';
-import { mapMenuItems, normalizeZone, normalizeZoneList } from './mappers';
+import { compareMenuItemId, mapMenuItems, normalizeZone, normalizeZoneList } from './mappers';
 import { normalizeCategoryType } from '@/lib/menuCategory';
 import { normalizeOrderDetailResponse } from './paymentDetailMapper';
 import type {
@@ -10,6 +10,7 @@ import type {
   KitchenPrinter, CategoryPrinterMapping, CategoryPrintersResponse, CategoryKitchenPrinter,
   CreateZoneRequest, UpdateZoneRequest,
   TableData, CreateTableRequest, TableLayoutUpdate, MergeTablesRequest, MergeTablesResponse,
+  OrderType,
   TransferTableRequest, TransferTableResponse,
   Booking, CreateBookingRequest, UpdateBookingRequest,
   StockItem, UpdateStockCountRequest, BulkStockUpdateRequest,
@@ -24,7 +25,7 @@ import type {
   HourlyRevenue, RecentTransaction, DrawerReconcileRequest, DrawerReconcileResponse,
   DashboardKpiSummary, DashboardSummary, ZoneRevenue, TopItem, PaymentBreakdown, HourlyZoneRevenue,
   AppNotification, UnreadCountResponse,
-  VenueConfig, PrinterTestResponse,
+  VenueConfig, PrinterTestResponse, PrintLongReportRequest, PrintLongReportResponse,
   AnalyticsSummary, AnalyticsQueryParams, AnalyticsTransaction, AnalyticsTransactionDetail,
   AnalyticsRevenueSeriesPoint, AnalyticsZoneRevenue,
   OrderDetailsResponse,
@@ -250,7 +251,13 @@ export const tablesApi = {
   delete: (id: string) => del<{ message: string }>(`/tables/${id}`),
   updateStatus: (
     id: string,
-    data: { status: TableData['status']; guestCount?: number; guests?: number; staff?: string },
+    data: {
+      status: TableData['status'];
+      guestCount?: number;
+      guests?: number;
+      staff?: string;
+      orderTypeId?: string;
+    },
   ) => {
     // Backend UpdateTableStatusRequest expects `guests` (not guestCount).
     const party = data.guests ?? data.guestCount;
@@ -258,6 +265,7 @@ export const tablesApi = {
       status: data.status,
       ...(data.staff != null ? { staff: data.staff } : {}),
       ...(party != null ? { guests: party } : {}),
+      ...(data.orderTypeId ? { orderTypeId: data.orderTypeId } : {}),
     });
   },
   updatePosition: (id: string, x: number, y: number) =>
@@ -290,6 +298,10 @@ function mapOrderLine(row: unknown): OrderItem {
 }
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
+export const orderTypesApi = {
+  list: () => get<OrderType[]>('/order-types'),
+};
+
 export const ordersApi = {
   list: (params?: { tableId?: string; status?: string }) => get<TableOrder[]>('/orders', params),
   listVoids: (params?: { from?: string; to?: string }) => get<VoidReportLine[]>('/orders/voids', params),
@@ -300,6 +312,8 @@ export const ordersApi = {
       tableId: String(raw.tableId ?? tableId),
       orderId: raw.orderId != null ? String(raw.orderId) : raw.order_id != null ? String(raw.order_id) : undefined,
       guestCount: Number(raw.guestCount ?? raw.guest_count) || undefined,
+      orderTypeId: raw.orderTypeId != null ? String(raw.orderTypeId) : raw.order_type_id != null ? String(raw.order_type_id) : undefined,
+      orderTypeName: raw.orderTypeName != null ? String(raw.orderTypeName) : raw.order_type_name != null ? String(raw.order_type_name) : undefined,
       note: (() => {
         const text = raw.note ?? raw.orderNote ?? raw.order_note;
         if (text == null) return undefined;
@@ -337,6 +351,8 @@ export const ordersApi = {
       zoneLabel: detail.zoneLabel,
       status: typeof raw.status === 'string' ? raw.status : undefined,
       covers: detail.covers ?? detail.guestCount,
+      orderTypeId: detail.orderTypeId,
+      orderTypeName: detail.orderTypeName,
       paymentId: detail.paymentId || undefined,
       method: detail.method,
       roomNumber: detail.roomNumber,
@@ -494,8 +510,10 @@ export const menuCategoryApi = {
 };
 
 export const menuApi = {
-  list: (categoryId?: string) =>
-    get<ApiMenuItem[]>('/menu', categoryId ? { categoryId } : undefined),
+  list: async (categoryId?: string) => {
+    const items = await get<ApiMenuItem[]>('/menu', categoryId ? { categoryId } : undefined);
+    return [...items].sort((a, b) => compareMenuItemId(a.id, b.id));
+  },
   categories: () => menuCategoryApi.list(),
   items: async (categoryId?: string): Promise<MenuItem[]> => {
     const items = await get<ApiMenuItem[]>('/menu', categoryId ? { categoryId } : undefined);
@@ -614,6 +632,8 @@ export const analyticsApi = {
     get<AnalyticsSummary['staffPerformance']>('/analytics/staff-performance', analyticsParams(params)),
   transactions: (params?: AnalyticsQueryParams) =>
     get<AnalyticsTransaction[]>('/analytics/transactions', analyticsParams(params)),
+  printLongReport: (data: PrintLongReportRequest) =>
+    post<PrintLongReportResponse>('/analytics/report/print', data),
   getTransaction: async (paymentId: string) => {
     const raw = await get<Record<string, unknown>>(
       `/analytics/transactions/${encodeURIComponent(paymentId)}`,

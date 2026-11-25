@@ -13,7 +13,8 @@ interface OrderPanelProps {
   items: OrderItem[];
   role: UserRole;
   onVoidItem: (itemId: string, reason: string) => void | Promise<void>;
-  onUpdateQty?: (itemId: string, qty: number) => void | Promise<void>;
+  onIncreaseItem?: (item: OrderItem, qty: number) => void | Promise<void>;
+  onDecreaseItem?: (itemId: string, qty: number, reason: string) => void | Promise<void>;
   onUpdateNote?: (itemId: string, qty: number, notes: string) => void | Promise<void>;
   onOpenSplit: () => void;
   onOpenTransfer: () => void;
@@ -46,7 +47,8 @@ export default function OrderPanel({
   items,
   role,
   onVoidItem,
-  onUpdateQty,
+  onIncreaseItem,
+  onDecreaseItem,
   onUpdateNote,
   onOpenSplit,
   onOpenTransfer,
@@ -57,6 +59,13 @@ export default function OrderPanel({
   const [voidTarget, setVoidTarget] = useState<OrderItem | null>(null);
   const [voidReason, setVoidReason] = useState('');
   const [voiding, setVoiding] = useState(false);
+  const [increaseTarget, setIncreaseTarget] = useState<OrderItem | null>(null);
+  const [increaseQty, setIncreaseQty] = useState('1');
+  const [increaseSaving, setIncreaseSaving] = useState(false);
+  const [decreaseTarget, setDecreaseTarget] = useState<OrderItem | null>(null);
+  const [decreaseQty, setDecreaseQty] = useState('1');
+  const [decreaseReason, setDecreaseReason] = useState('');
+  const [decreaseSaving, setDecreaseSaving] = useState(false);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
   const [printingBill, setPrintingBill] = useState(false);
@@ -117,6 +126,73 @@ export default function OrderPanel({
     void runVoid(itemId, reason, false);
   };
 
+  const closeIncreaseModal = () => {
+    if (increaseSaving) return;
+    setIncreaseTarget(null);
+    setIncreaseQty('1');
+  };
+
+  const submitIncrease = async () => {
+    if (!increaseTarget || increaseSaving || !onIncreaseItem) return;
+    const qty = Number(increaseQty);
+    if (!Number.isInteger(qty) || qty < 1) {
+      toast.error('Enter a quantity of at least 1');
+      return;
+    }
+    setIncreaseSaving(true);
+    try {
+      await onIncreaseItem(increaseTarget, qty);
+      setIncreaseTarget(null);
+      setIncreaseQty('1');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not send the extra quantity');
+    } finally {
+      setIncreaseSaving(false);
+    }
+  };
+
+  const closeDecreaseModal = () => {
+    if (decreaseSaving) return;
+    setDecreaseTarget(null);
+    setDecreaseQty('1');
+    setDecreaseReason('');
+  };
+
+  const runDecrease = async (itemId: string, qty: number, reason: string) => {
+    if (!onDecreaseItem) return;
+    setDecreaseSaving(true);
+    try {
+      await onDecreaseItem(itemId, qty, reason);
+      toast.success(`Decreased by ${qty}`);
+      setDecreaseTarget(null);
+      setDecreaseQty('1');
+      setDecreaseReason('');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not decrease the quantity');
+    } finally {
+      setDecreaseSaving(false);
+    }
+  };
+
+  const submitDecrease = () => {
+    if (!decreaseTarget || decreaseSaving || !onDecreaseItem) return;
+    const qty = Number(decreaseQty);
+    const reason = decreaseReason.trim();
+    if (!Number.isInteger(qty) || qty < 1 || qty > decreaseTarget.qty) {
+      toast.error(`Enter a quantity from 1 to ${decreaseTarget.qty}`);
+      return;
+    }
+    if (!reason) return;
+    const itemId = decreaseTarget.id;
+    if (role === 'Bartender') {
+      onRequestManagerPin('Decrease quantity', () => {
+        void runDecrease(itemId, qty, reason);
+      });
+      return;
+    }
+    void runDecrease(itemId, qty, reason);
+  };
+
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
       {/* Panel Header */}
@@ -152,19 +228,21 @@ export default function OrderPanel({
               <ArrowLeftRight size={11} />
               <span className="hidden xl:block">Change table</span>
             </button>
-            <button
-              onClick={() => {
-                if (role === 'Bartender') {
-                  onRequestManagerPin('Clear Table', () => { void onClearTable(); });
-                } else {
-                  void onClearTable();
-                }
-              }}
-              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 transition-all text-xs"
-            >
-              <Trash2 size={11} />
-              <span className="hidden xl:block">Clear</span>
-            </button>
+            {activeItems.length === 0 ? (
+              <button
+                onClick={() => {
+                  if (role === 'Bartender') {
+                    onRequestManagerPin('Clear Table', () => { void onClearTable(); });
+                  } else {
+                    void onClearTable();
+                  }
+                }}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 transition-all text-xs"
+              >
+                <Trash2 size={11} />
+                <span className="hidden xl:block">Clear</span>
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -195,7 +273,7 @@ export default function OrderPanel({
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-foreground leading-snug break-words">
-                    {item.status === 'Voided' || !onUpdateQty ? (
+                    {item.status === 'Voided' || !onIncreaseItem ? (
                       <span className="font-semibold text-muted-foreground text-tabular">{item.qty}x </span>
                     ) : null}
                     {item.name}
@@ -241,16 +319,15 @@ export default function OrderPanel({
                   ) : null}
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
-                  {item.status !== 'Voided' && onUpdateQty ? (
+                  {item.status !== 'Voided' && onIncreaseItem && onDecreaseItem ? (
                     <div className="flex items-center rounded-lg border border-border overflow-hidden">
                       <button
                         type="button"
-                        className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-40"
-                        disabled={item.qty <= 1}
+                        className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50"
                         onClick={() => {
-                          void onUpdateQty(item.id, item.qty - 1).catch((err) => {
-                            toast.error(err instanceof Error ? err.message : 'Could not update quantity');
-                          });
+                          setDecreaseTarget(item);
+                          setDecreaseQty('1');
+                          setDecreaseReason('');
                         }}
                         aria-label="Decrease quantity"
                       >
@@ -261,9 +338,8 @@ export default function OrderPanel({
                         type="button"
                         className="w-6 h-6 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50"
                         onClick={() => {
-                          void onUpdateQty(item.id, item.qty + 1).catch((err) => {
-                            toast.error(err instanceof Error ? err.message : 'Could not update quantity');
-                          });
+                          setIncreaseTarget(item);
+                          setIncreaseQty('1');
                         }}
                         aria-label="Increase quantity"
                       >
@@ -367,6 +443,148 @@ export default function OrderPanel({
           )}
         </div>
       </div>
+
+      {increaseTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="modal-overlay absolute inset-0" onClick={closeIncreaseModal} />
+          <form
+            className="relative w-full max-w-sm glass-card-elevated rounded-2xl border border-border p-5 fade-in"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitIncrease();
+            }}
+          >
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Add quantity</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {increaseTarget.name}{increaseTarget.size ? ` · ${increaseTarget.size}` : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeIncreaseModal}
+                className="p-1 rounded-lg text-muted-foreground hover:text-foreground"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5" htmlFor="increase-qty">
+              Quantity to send
+            </label>
+            <input
+              id="increase-qty"
+              autoFocus
+              inputMode="numeric"
+              value={increaseQty}
+              onChange={(e) => setIncreaseQty(e.target.value.replace(/\D/g, '').slice(0, 3))}
+              className="field-input w-full tabular-nums"
+            />
+            <p className="text-[11px] text-muted-foreground mt-2">
+              This quantity prints to the kitchen.
+            </p>
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                onClick={closeIncreaseModal}
+                disabled={increaseSaving}
+                className="flex-1 py-2.5 rounded-xl border border-border text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={increaseSaving || !increaseQty || Number(increaseQty) < 1}
+                className="flex-1 py-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-semibold hover:bg-emerald-500/25 disabled:opacity-40"
+              >
+                {increaseSaving ? 'Sending…' : 'Send to kitchen'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {decreaseTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="modal-overlay absolute inset-0" onClick={closeDecreaseModal} />
+          <form
+            className="relative w-full max-w-sm glass-card-elevated rounded-2xl border border-border p-5 fade-in"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitDecrease();
+            }}
+          >
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Decrease quantity</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {decreaseTarget.qty}× {decreaseTarget.name}{decreaseTarget.size ? ` · ${decreaseTarget.size}` : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeDecreaseModal}
+                className="p-1 rounded-lg text-muted-foreground hover:text-foreground"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5" htmlFor="decrease-qty">
+              Quantity to remove
+            </label>
+            <input
+              id="decrease-qty"
+              autoFocus
+              inputMode="numeric"
+              value={decreaseQty}
+              onChange={(e) => setDecreaseQty(e.target.value.replace(/\D/g, '').slice(0, 3))}
+              className="field-input w-full tabular-nums"
+            />
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5 mt-3" htmlFor="decrease-reason">
+              Reason
+            </label>
+            <textarea
+              id="decrease-reason"
+              rows={3}
+              value={decreaseReason}
+              onChange={(e) => setDecreaseReason(e.target.value)}
+              placeholder="Why is this quantity being removed?"
+              className="field-input w-full resize-none"
+            />
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {['Guest changed mind', 'Wrong item', 'Item cancelled by guest'].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setDecreaseReason(preset)}
+                  className="px-2 py-1 rounded-lg border border-border bg-muted/40 text-[10px] text-muted-foreground hover:text-foreground hover:border-primary/40"
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                onClick={closeDecreaseModal}
+                disabled={decreaseSaving}
+                className="flex-1 py-2.5 rounded-xl border border-border text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={decreaseSaving || !decreaseReason.trim() || !decreaseQty || Number(decreaseQty) < 1}
+                className="flex-1 py-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 text-xs font-semibold hover:bg-rose-500/25 disabled:opacity-40"
+              >
+                {decreaseSaving ? 'Saving…' : 'Decrease'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {voidTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

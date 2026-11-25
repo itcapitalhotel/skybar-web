@@ -57,10 +57,14 @@ export default function TopNav({ onLockTerminal }: TopNavProps) {
     <header className="glass-card-elevated sticky top-0 z-40 border-b border-border">
       <div className="flex items-center justify-between px-3 md:px-4 lg:px-6 h-14 md:h-16 gap-2">
         <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
-          <div className="flex items-center gap-2 shrink-0">
+          <Link
+            href="/"
+            aria-label="NAKNAK POS home"
+            className="flex items-center gap-2 shrink-0 rounded-md hover:opacity-80 transition-opacity"
+          >
             <AppLogo size={28} />
             <span className="font-semibold text-sm text-foreground leading-tight whitespace-nowrap">NAKNAK POS</span>
-          </div>
+          </Link>
 
           <nav className="hidden md:flex items-center ml-1 lg:ml-4 gap-0.5 lg:gap-1 min-w-0 overflow-x-auto scrollbar-none">
             {visibleTabs.map((tab) => {

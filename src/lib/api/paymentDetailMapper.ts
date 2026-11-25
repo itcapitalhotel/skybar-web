@@ -215,6 +215,8 @@ export function normalizeOrderDetailResponse(raw: Record<string, unknown>): Anal
     tableLabel: str(raw.tableLabel ?? raw.table_label) ?? '',
     zoneId: str(raw.zoneId ?? raw.zone_id),
     zoneLabel: str(raw.zoneLabel ?? raw.zone_label),
+    orderTypeId: str(raw.orderTypeId ?? raw.order_type_id),
+    orderTypeName: str(raw.orderTypeName ?? raw.order_type_name),
     type: str(raw.type),
     method: str(raw.method ?? primary?.method) ?? '',
     amount: total,

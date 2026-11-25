@@ -29,6 +29,18 @@ function toRows(printers: CategoryKitchenPrinter[]): PrinterRow[] {
   }));
 }
 
+function printerEndpointKey(ip: string, port: number | undefined): string {
+  return `${ip.trim().toLowerCase()}:${Number(port) || 9100}`;
+}
+
+function categoryAlreadyHasStation(rows: PrinterRow[], station: { id: string; printerIp: string; printerPort: number }): boolean {
+  const endpoint = printerEndpointKey(station.printerIp, station.printerPort);
+  return rows.some((row) =>
+    (row.id != null && row.id === station.id)
+    || (row.printerIp.trim() !== '' && printerEndpointKey(row.printerIp, row.printerPort) === endpoint),
+  );
+}
+
 function newEmptyRow(): PrinterRow {
   return {
     rowKey: `new-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -187,17 +199,22 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
     if (!stationId) return;
     const station = pickerStations.find((s) => s.id === stationId);
     if (!station) return;
-    const alreadyLinkedHere = station.categoryIds?.includes(categoryId) ?? false;
+    const current = printersByCategory[categoryId] ?? [];
+    if (categoryAlreadyHasStation(current, station)) {
+      toast.error(`${station.name} is already on this category`);
+      return;
+    }
     setPrintersByCategory((prev) => ({
       ...prev,
       [categoryId]: [
         ...(prev[categoryId] ?? []),
         {
           rowKey: `pick-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: station.id,
+          idOwnedByCategory: true,
           name: station.name,
           printerIp: station.printerIp,
           printerPort: station.printerPort,
-          ...(alreadyLinkedHere ? { id: station.id, idOwnedByCategory: true } : {}),
         },
       ],
     }));
@@ -257,6 +274,15 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
         toast.error(`${p.name}: connection test failed — check the address and try Test again`);
         return;
       }
+    }
+    const seenEndpoints = new Set<string>();
+    for (const row of activeRows) {
+      const endpoint = printerEndpointKey(row.printerIp, row.printerPort);
+      if (seenEndpoints.has(endpoint)) {
+        toast.error(`${row.name.trim() || row.printerIp.trim()} is already on this category`);
+        return;
+      }
+      seenEndpoints.add(endpoint);
     }
     const payload = rowsToPayload(rows);
     setSavingCategoryId(categoryId);
@@ -357,12 +383,16 @@ export function CategoryPrinterSettings({ reloadToken }: { reloadToken: number }
                 className="text-xs bg-background border border-border rounded-lg px-2 py-1.5 max-w-[13rem]"
               >
                 <option value="">Copy existing station…</option>
-                {pickerStations.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.printerIp})
-                    {s.categoryIds?.length ? ` · ${s.categoryIds.length} cat` : ''}
-                  </option>
-                ))}
+                {pickerStations.map((s) => {
+                  const alreadyHere = categoryAlreadyHasStation(rows, s);
+                  return (
+                    <option key={s.id} value={s.id} disabled={alreadyHere}>
+                      {s.name} ({s.printerIp})
+                      {alreadyHere ? ' · already on this category' : ''}
+                      {!alreadyHere && s.categoryIds?.length ? ` · ${s.categoryIds.length} cat` : ''}
+                    </option>
+                  );
+                })}
               </select>
               <button
                 type="button"

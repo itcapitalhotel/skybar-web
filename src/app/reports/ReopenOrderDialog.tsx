@@ -3,8 +3,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { ordersApi } from '@/lib/api/client';
-import type { OrderDetailsPayment, OrderDetailsResponse, UpdateClosedOrderRequest } from '@/lib/api/types';
+import { ordersApi, orderTypesApi } from '@/lib/api/client';
+import type { OrderDetailsPayment, OrderDetailsResponse, OrderType, UpdateClosedOrderRequest } from '@/lib/api/types';
 
 type PayMethod = 'cash' | 'card' | 'qr' | 'room';
 
@@ -17,8 +17,14 @@ interface FormState {
   roomNumber: string;
   tip: string;
   guestCount: string;
+  orderTypeId: string;
   note: string;
 }
+
+const FALLBACK_ORDER_TYPES: OrderType[] = [
+  { id: 'in-house', name: 'In House', sortOrder: 1, active: true },
+  { id: 'walk-in', name: 'Walk In', sortOrder: 2, active: true },
+];
 
 const METHODS: { value: PayMethod; label: string }[] = [
   { value: 'cash', label: 'Cash' },
@@ -63,6 +69,7 @@ function formFromDetail(detail: OrderDetailsResponse, paymentId: string, note: s
     roomNumber: (detail.roomNumber ?? '').trim(),
     tip: moneyInput(payment?.tip ?? detail.tip),
     guestCount: detail.covers != null && detail.covers > 0 ? String(detail.covers) : '',
+    orderTypeId: detail.orderTypeId ?? '',
     note,
   };
 }
@@ -110,11 +117,8 @@ function buildPatch(
     body.tip = Math.round(n * 100) / 100;
   }
 
-  if (form.guestCount.trim() !== base.guestCount.trim()) {
-    const n = Number(form.guestCount.trim());
-    if (!Number.isInteger(n) || n < 1) return 'Guest count must be at least 1.';
-    body.guestCount = n;
-  }
+  const partyError = applyPartyFields(form, base, body);
+  if (partyError) return partyError;
 
   const note = form.note.trim();
   if (note && note !== base.note.trim()) body.note = note;
@@ -126,6 +130,23 @@ function buildPatch(
     body.paymentId = form.paymentId;
   }
   return body;
+}
+
+function applyPartyFields(
+  form: FormState,
+  base: FormState,
+  body: UpdateClosedOrderRequest,
+): string | null {
+  if (form.guestCount.trim() !== base.guestCount.trim()) {
+    const n = Number(form.guestCount.trim());
+    if (!Number.isInteger(n) || n < 1) return 'Guest count must be at least 1.';
+    body.guestCount = n;
+  }
+  if (form.orderTypeId !== base.orderTypeId) {
+    if (!form.orderTypeId) return 'Choose an order type.';
+    body.orderTypeId = form.orderTypeId;
+  }
+  return null;
 }
 
 function paymentLabel(payment: OrderDetailsPayment, index: number): string {
@@ -159,6 +180,19 @@ export default function ReopenOrderDialog({
   const [reopening, setReopening] = useState(false);
   const [confirmReopen, setConfirmReopen] = useState(false);
   const [error, setError] = useState('');
+  const [orderTypes, setOrderTypes] = useState<OrderType[]>(FALLBACK_ORDER_TYPES);
+
+  useEffect(() => {
+    let cancelled = false;
+    orderTypesApi.list()
+      .then((list) => {
+        if (cancelled) return;
+        const active = list.filter((type) => type.active !== false && type.name?.trim());
+        if (active.length > 0) setOrderTypes(active);
+      })
+      .catch(() => { /* keep In House and Walk In */ });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -201,8 +235,10 @@ export default function ReopenOrderDialog({
     if (!detail) return;
     const note = form?.note ?? '';
     const guests = form?.guestCount ?? '';
+    const orderTypeId = form?.orderTypeId ?? '';
     const next = formFromDetail(detail, nextPaymentId, note);
     next.guestCount = guests || next.guestCount;
+    next.orderTypeId = orderTypeId || next.orderTypeId;
     setForm(next);
     setBaseline({ ...next, note: '', guestCount: formFromDetail(detail, nextPaymentId, '').guestCount });
     setError('');
@@ -234,10 +270,20 @@ export default function ReopenOrderDialog({
   };
 
   const reopenOrder = async () => {
-    if (reopening || saving) return;
+    if (!form || !baseline || reopening || saving) return;
+    const party: UpdateClosedOrderRequest = {};
+    const partyError = applyPartyFields(form, baseline, party);
+    if (partyError) {
+      setError(partyError);
+      setConfirmReopen(false);
+      return;
+    }
     setReopening(true);
     setError('');
     try {
+      if (Object.keys(party).length > 0) {
+        await ordersApi.updateClosed(orderId, party);
+      }
       await ordersApi.reopen(orderId);
       toast.success(`${tableLabel} is occupied again. Change the items, then pay once.`);
       onChanged();
@@ -386,6 +432,20 @@ export default function ReopenOrderDialog({
                 </div>
 
                 <label className="block space-y-1">
+                  <span className="text-xs text-muted-foreground">Order type</span>
+                  <select
+                    className="field-input w-full"
+                    value={form.orderTypeId}
+                    onChange={(e) => patchField({ orderTypeId: e.target.value })}
+                  >
+                    {!form.orderTypeId ? <option value="">Choose a type</option> : null}
+                    {orderTypes.map((type) => (
+                      <option key={type.id} value={type.id}>{type.name}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block space-y-1">
                   <span className="text-xs text-muted-foreground">Note</span>
                   <input
                     className="field-input w-full"
@@ -410,7 +470,7 @@ export default function ReopenOrderDialog({
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Reopen to change items</h3>
                   <p className="text-xs text-muted-foreground mt-1">
                     The order goes back to active, {tableLabel} is occupied again, and the old payment is removed so it is not charged twice.
-                    Change the items on the floor, then pay again. This fails if the table already has another open order.
+                    Guest count and order type above are saved on the table. Change the items on the floor, then pay again. This fails if the table already has another open order.
                   </p>
                 </div>
                 {confirmReopen ? (

@@ -158,6 +158,8 @@ export interface TableData {
   guests: number;
   /** Preferred API field on PATCH status responses */
   guestCount?: number;
+  orderTypeId?: string;
+  orderTypeName?: string;
   capacity: number;
   staff: string;
   seatedMinutes: number;
@@ -334,11 +336,20 @@ export interface OrderItem {
   categoryType?: MenuCategoryType;
 }
 
+export interface OrderType {
+  id: string;
+  name: string;
+  sortOrder?: number;
+  active?: boolean;
+}
+
 export interface TableOrder {
   tableId: string;
   /** Server order id (e.g. "15") — store from GET/POST, not client-generated */
   orderId?: string;
   guestCount?: number;
+  orderTypeId?: string;
+  orderTypeName?: string;
   /** Shared note copied onto new lines that do not have their own note */
   note?: string;
   items: OrderItem[];
@@ -383,6 +394,8 @@ export interface AddOrderItemsRequest {
   staff: string;
   /** Party size — required when opening/seating; send on kitchen send */
   guestCount?: number;
+  /** Id or name, for example in-house or Walk In. Omitted keeps the type from when the table was opened. */
+  orderTypeId?: string;
   /** Printed under every new item that has no line note of its own */
   note?: string;
 }
@@ -435,6 +448,8 @@ export interface UpdateClosedOrderRequest {
   roomNumber?: string | null;
   note?: string | null;
   guestCount?: number;
+  /** Id or name, for example in-house or Walk In. */
+  orderTypeId?: string;
   /** Required when the bill was split. */
   paymentId?: string;
 }
@@ -444,6 +459,8 @@ export interface VoidOrderItemRequest {
   /** Staff user id — required by the API */
   staff: string;
   managerApproval?: string;
+  /** Units to cancel. Omit to cancel the whole line. */
+  qty?: number;
 }
 
 // ── KDS ───────────────────────────────────────────────────────────────────────
@@ -1057,6 +1074,8 @@ export interface AnalyticsTransactionDetail {
   tableLabel: string;
   zoneId?: string;
   zoneLabel?: string;
+  orderTypeId?: string;
+  orderTypeName?: string;
   type?: string;
   method: string;
   amount: number;
@@ -1140,6 +1159,8 @@ export interface OrderDetailsResponse {
   zoneLabel?: string;
   status?: string;
   covers?: number;
+  orderTypeId?: string;
+  orderTypeName?: string;
   openedAt?: string;
   closedAt?: string;
   staffId?: string;
@@ -1252,9 +1273,37 @@ export interface VenueConfig {
   timezone?: string;
   printerIp: string;
   printerPort: number | string;
+  /** Office printer for the long sales report. Guest receipts stay on the zone printer. */
+  reportPrinterName?: string;
+  reportPrinterIp?: string;
+  reportPrinterPort?: number | string;
   houseRules: string;
   receiptHeader: string;
   receiptFooter: string;
+}
+
+export interface PrintLongReportRequest {
+  printerName?: string;
+  printerIp: string;
+  printerPort?: number;
+  range?: 'today' | 'yesterday' | '7d' | '30d';
+  from?: string;
+  to?: string;
+  timezone?: string;
+  zoneId?: string;
+}
+
+export interface PrintLongReportResponse {
+  printerName?: string;
+  printerIp: string;
+  printerPort: number;
+  period: string;
+  totalRevenue: number;
+  totalOrders: number;
+  itemLines: number;
+  checks: number;
+  printed: boolean;
+  message: string;
 }
 
 export interface PrinterTestResponse {

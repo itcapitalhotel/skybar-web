@@ -137,7 +137,7 @@ export default function StaffManagementPage() {
     // New staff always need a login PIN. Existing staff only validate when a PIN is typed.
     if (!editingUser || pinEntered) {
       if (!isValidPin(form.pin)) {
-        setPinError('PIN must be 4 digits');
+        setPinError('PIN must be 4 to 6 digits');
         setPinStep('pin');
         return;
       }

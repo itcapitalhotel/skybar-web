@@ -105,10 +105,12 @@ export default function LoginPage() {
   };
 
   useEffect(() => {
-    if (!selectedStaff || pin.length !== 4 || success) return;
+    if (!selectedStaff || success || pin.length < 4) return;
+    // Wait after 4 or 5 digits so a longer PIN is not sent too early.
+    const delay = pin.length >= 6 ? 80 : 700;
     const t = window.setTimeout(() => {
       void tryLogin(selectedStaff, pin);
-    }, 120);
+    }, delay);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pin, selectedStaff, success]);
@@ -220,12 +222,12 @@ export default function LoginPage() {
                 <Lock size={14} className="text-primary" />
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Enter PIN</h3>
-                  <p className="text-xs text-muted-foreground">Use the built-in PIN keyboard below</p>
+                  <p className="text-xs text-muted-foreground">4 to 6 digits, the same PIN saved on the account</p>
                 </div>
               </div>
 
               <div className={`flex justify-center gap-4 mb-5 ${shake ? 'animate-bounce' : ''}`}>
-                {[0, 1, 2, 3].map(i => (
+                {[0, 1, 2, 3, 4, 5].map(i => (
                   <div
                     key={`pin-dot-${i}`}
                     className={`w-4 h-4 rounded-full border-2 transition-all ${
@@ -240,12 +242,21 @@ export default function LoginPage() {
 
               <PinPad
                 value={pin}
+                maxLength={6}
                 disabled={success}
                 onChange={(next) => {
-                  setPin(next);
+                  setPin(next.replace(/\D/g, '').slice(0, 6));
                   setError('');
                 }}
               />
+              <button
+                type="button"
+                disabled={success || pin.length < 4}
+                onClick={() => { void tryLogin(selectedStaff, pin); }}
+                className="mt-4 w-full py-3 rounded-xl text-sm font-semibold border border-primary/40 text-primary bg-primary/10 hover:bg-primary/20 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Sign in
+              </button>
             </div>
           </div>
         )}

@@ -28,6 +28,9 @@ interface ConfigState {
   currencySymbol: string;
   printerIp: string;
   printerPort: string;
+  reportPrinterName: string;
+  reportPrinterIp: string;
+  reportPrinterPort: string;
   houseRules: string;
   receiptHeader: string;
   receiptFooter: string;
@@ -58,6 +61,9 @@ const DEFAULT_CONFIG: ConfigState = {
   currencySymbol: '$',
   printerIp: '192.168.1.100',
   printerPort: '9100',
+  reportPrinterName: '',
+  reportPrinterIp: '',
+  reportPrinterPort: '9100',
   houseRules: `Welcome to NAKNAK POS.\n\n1. Minimum spend applies to all VIP and Cabana tables.\n2. Management reserves the right to refuse service.\n3. No outside food or beverages permitted.\n4. Dress code strictly enforced — smart casual required.\n5. Last orders at 1:30 AM. Venue closes at 2:00 AM.\n6. All prices include applicable taxes and service charge.\n7. Guests are responsible for their personal belongings.\n8. Photography for personal use only — no commercial shoots without prior approval.`,
   receiptHeader: 'NAKNAK POS\nLevel 32, Skyline Tower\nTel: +1 (555) 987-6543',
   receiptFooter: 'Thank you for visiting NAKNAK POS!',
@@ -90,6 +96,9 @@ export default function AdminConfigPage() {
   const [defaultPingSlots, setDefaultPingSlots] = useState<PingSlot[]>(idlePingSlots);
   const [defaultPingRunning, setDefaultPingRunning] = useState(false);
   const [defaultPingDetail, setDefaultPingDetail] = useState<string | null>(null);
+  const [reportPingSlots, setReportPingSlots] = useState<PingSlot[]>(idlePingSlots);
+  const [reportPingRunning, setReportPingRunning] = useState(false);
+  const [reportPingDetail, setReportPingDetail] = useState<string | null>(null);
 
   // Zone printers state — each zone has an array of printers
   const [zonePrinters, setZonePrinters] = useState<ZonePrinterGroup[]>([]);
@@ -105,8 +114,14 @@ export default function AdminConfigPage() {
     configApi.get()
       .then((data: VenueConfig) => {
         if (!cancelled) {
-          setConfig(data as ConfigState);
-          setSaved(data as ConfigState);
+          const next: ConfigState = {
+            ...(data as ConfigState),
+            reportPrinterName: data.reportPrinterName ?? '',
+            reportPrinterIp: data.reportPrinterIp ?? '',
+            reportPrinterPort: String(data.reportPrinterPort ?? 9100),
+          };
+          setConfig(next);
+          setSaved(next);
         }
       })
       .catch(() => { /* keep DEFAULT_CONFIG */ });
@@ -156,12 +171,23 @@ export default function AdminConfigPage() {
 
   const handleSave = async () => {
     setSaveStatus('saving');
+    const next: ConfigState = {
+      ...config,
+      reportPrinterName: config.reportPrinterName.trim(),
+      reportPrinterIp: config.reportPrinterIp.trim(),
+      reportPrinterPort: String(Number(config.reportPrinterPort) || 9100),
+    };
     try {
-      await configApi.update(config as Partial<VenueConfig>);
-      setSaved({ ...config });
+      await configApi.update({
+        ...next,
+        reportPrinterPort: Number(next.reportPrinterPort),
+      });
+      setConfig(next);
+      setSaved(next);
       setSaveStatus('saved');
     } catch {
-      setSaved({ ...config });
+      setConfig(next);
+      setSaved(next);
       setSaveStatus('saved');
     }
     setTimeout(() => setSaveStatus('idle'), 2500);
@@ -199,6 +225,37 @@ export default function AdminConfigPage() {
       });
     } finally {
       setDefaultPingRunning(false);
+    }
+  };
+
+  const handleTestReportPrinter = async () => {
+    if (reportPingRunning) return;
+    const pre = validatePrinterEndpoint(config.reportPrinterIp, config.reportPrinterPort);
+    if (!pre.ok) {
+      toast.error(pre.error);
+      setReportPingSlots(Array.from({ length: PRINTER_PING_COUNT }, () => 'fail' as PingSlot));
+      setReportPingDetail(pre.error);
+      return;
+    }
+    setReportPingRunning(true);
+    setReportPingDetail(null);
+    setReportPingSlots(idlePingSlots().map(() => 'idle'));
+    try {
+      await runTcpPrinterPingSeries(config.reportPrinterIp, config.reportPrinterPort, (index, slot) => {
+        setReportPingSlots(prev => {
+          const next = [...prev];
+          next[index] = slot;
+          return next;
+        });
+      }, ({ lastMessage, okCount }) => {
+        setReportPingDetail(
+          okCount === 0
+            ? `${lastMessage} — could not reach ${config.reportPrinterIp}:${config.reportPrinterPort}.`
+            : `${lastMessage} (${okCount}/${PRINTER_PING_COUNT} checks passed)`,
+        );
+      });
+    } finally {
+      setReportPingRunning(false);
     }
   };
 
@@ -415,7 +472,7 @@ export default function AdminConfigPage() {
   const SECTIONS: { id: ActiveSection; label: string; icon: React.ReactNode; desc: string }[] = [
     { id: 'charges', label: 'Charges & Tax', icon: <Percent size={16} />, desc: 'Service charge & VAT rates' },
     { id: 'currency', label: 'Currency', icon: <Globe size={16} />, desc: 'Display currency & symbol' },
-    { id: 'printer', label: 'Receipt Printer', icon: <Printer size={16} />, desc: 'Printer IP & port config' },
+    { id: 'printer', label: 'Receipt Printer', icon: <Printer size={16} />, desc: 'Receipt and long-report printers' },
     { id: 'categoryPrinter', label: 'Category Printer', icon: <Link2 size={16} />, desc: 'Name / IP / port per menu category' },
     { id: 'rules', label: 'House Rules', icon: <BookOpen size={16} />, desc: 'Venue policies & rules' },
     { id: 'receipt', label: 'Receipt Layout', icon: <FileText size={16} />, desc: 'Header, footer & preview' },
@@ -626,7 +683,7 @@ export default function AdminConfigPage() {
                 <div className="space-y-6">
                   <div>
                     <h2 className="text-base font-semibold text-foreground mb-1">Receipt Printer</h2>
-                    <p className="text-sm text-muted-foreground">Configure the default printer and assign dedicated printers per zone. Each zone can have multiple printers.</p>
+                    <p className="text-sm text-muted-foreground">Guest receipts still print on the zone receipt printer. The long sales report prints to the office printer below.</p>
                   </div>
 
                   {/* ── Default / Fallback Printer ─────────────────────────── */}
@@ -692,6 +749,78 @@ export default function AdminConfigPage() {
                     <p className="text-[11px] text-muted-foreground">
                       Blue means the printer responded. Red means it could not be reached — check the address, port, power, and network.
                     </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-indigo-500/8 border border-indigo-500/25 space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Printer size={15} className="text-indigo-400" />
+                      <p className="text-sm font-semibold text-foreground">Long report printer</p>
+                      <span className="ml-auto text-xs text-muted-foreground">Used by Reports → Print long report</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      The long sales tape is sent to this IP. Short guest receipts stay on the zone receipt printer. Save after you change the address.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Name</label>
+                        <input
+                          type="text"
+                          placeholder="Office"
+                          value={config.reportPrinterName}
+                          onChange={e => setConfig(p => ({ ...p, reportPrinterName: e.target.value }))}
+                          className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-indigo-500/50"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">IP Address</label>
+                        <input
+                          type="text"
+                          placeholder="172.20.15.157"
+                          value={config.reportPrinterIp}
+                          onChange={e => setConfig(p => ({ ...p, reportPrinterIp: e.target.value }))}
+                          className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-indigo-500/50 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Port</label>
+                        <input
+                          type="text"
+                          placeholder="9100"
+                          value={config.reportPrinterPort}
+                          onChange={e => setConfig(p => ({ ...p, reportPrinterPort: e.target.value }))}
+                          className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-indigo-500/50 font-mono"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => void handleTestReportPrinter()}
+                        disabled={reportPingRunning || !validatePrinterEndpoint(config.reportPrinterIp, config.reportPrinterPort).ok}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {reportPingRunning ? (
+                          <>
+                            <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                            Pinging…
+                          </>
+                        ) : (
+                          <>
+                            <Wifi size={14} />
+                            Test (5 pings)
+                          </>
+                        )}
+                      </button>
+                      <PrinterPingIndicators slots={reportPingSlots} />
+                      {pingSummary(reportPingSlots) && (
+                        <span className="text-xs text-muted-foreground tabular-nums">{pingSummary(reportPingSlots)}</span>
+                      )}
+                    </div>
+                    {reportPingDetail && (
+                      <p className={`text-[11px] ${reportPingSlots.some(s => s === 'ok') ? 'text-sky-400/90' : 'text-rose-400/90'}`}>
+                        {reportPingDetail}
+                      </p>
+                    )}
                   </div>
 
                   {/* ── Zone Printer Assignment ────────────────────────────── */}
