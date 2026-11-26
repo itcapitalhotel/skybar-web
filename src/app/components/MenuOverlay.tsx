@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import {
   X, Plus, Minus, ShoppingCart, Star, Search, Trash2, ChevronRight,
 } from 'lucide-react';
@@ -68,6 +68,10 @@ export default function MenuOverlay({
   const [submitting, setSubmitting] = useState(false);
   const [sendNote, setSendNote] = useState(tableNote);
   const [sizePickerItem, setSizePickerItem] = useState<MenuItem | null>(null);
+  const menuScrollRef = useRef<HTMLDivElement>(null);
+  const chipBarRef = useRef<HTMLDivElement>(null);
+  const sectionRefs = useRef(new Map<string, HTMLElement>());
+  const spyLockUntil = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -112,21 +116,69 @@ export default function MenuOverlay({
     });
   }, [categories, menuItems]);
 
-  const filteredItems = useMemo(() => {
-    return menuItems
-      .filter((item) => {
-        const matchCat =
-          activeCategory === 'All'
-          || item.categoryId === activeCategory
-          || item.category === activeCategory;
-        const q = search.toLowerCase();
-        const matchSearch = !search
-          || item.name.toLowerCase().includes(q)
-          || (item.khmerName ?? '').toLowerCase().includes(q);
-        return matchCat && matchSearch;
-      })
+  const menuSections = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const matches = (item: MenuItem) =>
+      !q
+      || item.name.toLowerCase().includes(q)
+      || (item.khmerName ?? '').toLowerCase().includes(q);
+    const sections = sortedCategories
+      .map((cat) => ({
+        cat,
+        items: menuItems
+          .filter((item) => (
+            item.categoryId === cat.id || item.category === cat.id
+          ) && matches(item))
+          .sort((a, b) => compareMenuItemId(a.id, b.id)),
+      }))
+      .filter((section) => section.items.length > 0);
+    const placed = new Set(sections.flatMap((section) => section.items.map((item) => item.id)));
+    const otherItems = menuItems
+      .filter((item) => matches(item) && !placed.has(item.id))
       .sort((a, b) => compareMenuItemId(a.id, b.id));
-  }, [menuItems, activeCategory, search]);
+    return { sections, otherItems };
+  }, [sortedCategories, menuItems, search]);
+
+  const syncCategoryFromScroll = () => {
+    if (Date.now() < spyLockUntil.current) return;
+    const root = menuScrollRef.current;
+    if (!root || menuSections.sections.length === 0) return;
+    if (root.scrollTop < 16) {
+      setActiveCategory((prev) => (prev === 'All' ? prev : 'All'));
+      return;
+    }
+    const rootTop = root.getBoundingClientRect().top;
+    let current = menuSections.sections[0].cat.id;
+    for (const section of menuSections.sections) {
+      const el = sectionRefs.current.get(section.cat.id);
+      if (!el) continue;
+      if (el.getBoundingClientRect().top - rootTop <= 64) current = section.cat.id;
+    }
+    setActiveCategory((prev) => (prev === current ? prev : current));
+  };
+
+  const selectCategory = (id: string) => {
+    setActiveCategory(id);
+    spyLockUntil.current = Date.now() + 700;
+    const root = menuScrollRef.current;
+    if (!root) return;
+    if (id === 'All') {
+      root.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    const el = sectionRefs.current.get(id);
+    if (!el) return;
+    const top = el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
+    root.scrollTo({ top: Math.max(0, top - 4), behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    const bar = chipBarRef.current;
+    const chip = bar?.querySelector<HTMLElement>(`[data-category="${CSS.escape(activeCategory)}"]`);
+    if (!bar || !chip) return;
+    const left = chip.offsetLeft - (bar.clientWidth - chip.offsetWidth) / 2;
+    bar.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
+  }, [activeCategory]);
 
   const cartSummary = useMemo(() => {
     const lines = cart.length;
@@ -271,10 +323,11 @@ export default function MenuOverlay({
                     className="w-full pl-9 pr-3 py-2 rounded-lg bg-background border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/40"
                   />
                 </div>
-                <div className="flex gap-2 overflow-x-auto scrollbar-none pb-0.5">
+                <div ref={chipBarRef} className="flex gap-2 overflow-x-auto scrollbar-none pb-0.5">
                   <button
                     type="button"
-                    onClick={() => setActiveCategory('All')}
+                    data-category="All"
+                    onClick={() => selectCategory('All')}
                     className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                       activeCategory === 'All'
                         ? 'bg-primary/15 text-primary border border-primary/30'
@@ -287,7 +340,8 @@ export default function MenuOverlay({
                     <button
                       key={cat.id}
                       type="button"
-                      onClick={() => setActiveCategory(cat.id)}
+                      data-category={cat.id}
+                      onClick={() => selectCategory(cat.id)}
                       className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                         activeCategory === cat.id
                           ? 'bg-primary/15 text-primary border border-primary/30'
@@ -300,43 +354,93 @@ export default function MenuOverlay({
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-3 sm:p-4 grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 content-start">
-                {filteredItems.length === 0 ? (
-                  <p className="col-span-full text-center text-sm text-muted-foreground py-8">
+              <div
+                ref={menuScrollRef}
+                onScroll={syncCategoryFromScroll}
+                className="flex-1 overflow-y-auto p-3 sm:p-4"
+              >
+                {menuSections.sections.length === 0 && menuSections.otherItems.length === 0 ? (
+                  <p className="text-center text-sm text-muted-foreground py-8">
                     No items match your search.
                   </p>
                 ) : (
-                  filteredItems.map((item) => {
-                    const multiSize = (item.sizes?.filter((s) => s.label?.trim()).length ?? 0) > 1;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => handleMenuItemClick(item)}
-                        className="text-left p-3 rounded-xl border border-border bg-muted/20 hover:bg-muted/45 hover:border-primary/25 transition-all active:scale-[0.98]"
-                      >
-                        <div className="flex items-start justify-between gap-1 mb-1">
-                          {item.popular ? (
-                            <Star size={11} className="text-amber-400 flex-shrink-0 mt-0.5" fill="currentColor" />
-                          ) : (
-                            <span className="w-3" />
-                          )}
-                          {multiSize ? (
-                            <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">
-                              Sizes
-                            </span>
-                          ) : null}
-                        </div>
-                        <p className="text-sm font-medium text-foreground leading-snug break-words">
-                          <BilingualItemName name={item.name} khmerName={item.khmerName} />
-                        </p>
-                        {!multiSize && item.sizes?.[0]?.label ? (
-                          <p className="text-[10px] text-muted-foreground mt-0.5">{item.sizes[0].label}</p>
-                        ) : null}
-                        <p className="text-xs text-primary font-semibold mt-1.5">{menuItemPriceLabel(item)}</p>
-                      </button>
-                    );
-                  })
+                  <>
+                  {menuSections.sections.map((section) => (
+                    <section
+                      key={section.cat.id}
+                      ref={(el) => {
+                        if (el) sectionRefs.current.set(section.cat.id, el);
+                        else sectionRefs.current.delete(section.cat.id);
+                      }}
+                      className="mb-5"
+                    >
+                      <h4 className="sticky top-0 z-10 -mx-3 sm:-mx-4 px-3 sm:px-4 py-2 mb-2 bg-background/95 backdrop-blur-sm text-xs font-semibold text-foreground border-b border-border/60">
+                        {section.cat.icon} {section.cat.label}
+                      </h4>
+                      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
+                        {section.items.map((item) => {
+                          const multiSize = (item.sizes?.filter((s) => s.label?.trim()).length ?? 0) > 1;
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => handleMenuItemClick(item)}
+                              className="text-left p-3 rounded-xl border border-border bg-muted/20 hover:bg-muted/45 hover:border-primary/25 transition-all active:scale-[0.98]"
+                            >
+                              <div className="flex items-start justify-between gap-1 mb-1">
+                                {item.popular ? (
+                                  <Star size={11} className="text-amber-400 flex-shrink-0 mt-0.5" fill="currentColor" />
+                                ) : (
+                                  <span className="w-3" />
+                                )}
+                                {multiSize ? (
+                                  <span className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">
+                                    Sizes
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className="text-sm font-medium text-foreground leading-snug break-words">
+                                <BilingualItemName name={item.name} khmerName={item.khmerName} />
+                              </p>
+                              {!multiSize && item.sizes?.[0]?.label ? (
+                                <p className="text-[10px] text-muted-foreground mt-0.5">{item.sizes[0].label}</p>
+                              ) : null}
+                              <p className="text-xs text-primary font-semibold mt-1.5">{menuItemPriceLabel(item)}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                  {menuSections.otherItems.length > 0 ? (
+                    <section className="mb-5">
+                      <h4 className="sticky top-0 z-10 -mx-3 sm:-mx-4 px-3 sm:px-4 py-2 mb-2 bg-background/95 backdrop-blur-sm text-xs font-semibold text-foreground border-b border-border/60">
+                        Other
+                      </h4>
+                      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
+                        {menuSections.otherItems.map((item) => {
+                          const multiSize = (item.sizes?.filter((s) => s.label?.trim()).length ?? 0) > 1;
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => handleMenuItemClick(item)}
+                              className="text-left p-3 rounded-xl border border-border bg-muted/20 hover:bg-muted/45 hover:border-primary/25 transition-all active:scale-[0.98]"
+                            >
+                              <p className="text-sm font-medium text-foreground leading-snug break-words">
+                                <BilingualItemName name={item.name} khmerName={item.khmerName} />
+                              </p>
+                              <p className="text-xs text-primary font-semibold mt-1.5">{menuItemPriceLabel(item)}</p>
+                              {multiSize ? (
+                                <p className="text-[10px] text-muted-foreground mt-0.5">Sizes</p>
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ) : null}
+                  </>
                 )}
               </div>
             </div>
