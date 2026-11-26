@@ -16,6 +16,7 @@ import {
   partitionItemsEvenly,
   type ExplodedSplitUnit,
 } from '@/lib/splitBillHelpers';
+import { venueGrossMultiplier } from '@/lib/venueRates';
 
 interface OrderItem {
   id: string;
@@ -83,7 +84,7 @@ function assignUnitsToGuests(
   targets: number[] | null,
 ): Map<string, number> {
   const value = Array.from({ length: guestCount }, () => 0);
-  const room = targets ? targets.map((amount) => Math.max(0, amount / 1.21)) : null;
+  const room = targets ? targets.map((amount) => Math.max(0, amount / venueGrossMultiplier())) : null;
   const assignment = new Map<string, number>();
   const sorted = [...units].sort((a, b) => b.price - a.price);
   for (const unit of sorted) {

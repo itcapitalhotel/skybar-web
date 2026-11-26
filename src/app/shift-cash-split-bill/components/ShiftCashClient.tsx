@@ -6,6 +6,7 @@ import LockModal from '@/components/LockModal';
 import SplitBillModal from '@/components/SplitBillModal';
 import MergeTablesModal from '@/components/MergeTablesModal';
 import { tablesApi, ordersApi } from '@/lib/api/client';
+import { venueGrossMultiplier } from '@/lib/venueRates';
 import type { TableData } from '@/lib/api/types';
 import type { TableData as FloorTableData, OrderItem } from '@/app/components/floorData';
 import {
@@ -87,7 +88,7 @@ export default function ShiftCashClient() {
     if (!splitTableId) return 0;
     const fromApi = tableOrderTotals[splitTableId];
     if (fromApi != null && Number.isFinite(fromApi)) return fromApi;
-    return splitItems.reduce((a, i) => a + i.unitPrice * i.qty, 0) * 1.21;
+    return splitItems.reduce((a, i) => a + i.unitPrice * i.qty, 0) * venueGrossMultiplier();
   })();
 
   const TABS: { id: ActiveTab; label: string; icon: React.ReactNode }[] = [
@@ -172,7 +173,7 @@ export default function ShiftCashClient() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
                   {occupiedBillTables.map(t => {
                     const items = tableOrders[t.id] || [];
-                    const total = items.reduce((a, i) => i.status !== 'Voided' ? a + i.unitPrice * i.qty : a, 0) * 1.21;
+                    const total = items.reduce((a, i) => i.status !== 'Voided' ? a + i.unitPrice * i.qty : a, 0) * venueGrossMultiplier();
                     return (
                       <button
                         key={t.id}
@@ -219,7 +220,12 @@ export default function ShiftCashClient() {
                   <div className="space-y-1.5 max-h-48 overflow-y-auto scrollbar-thin">
                     {splitItems.map(item => (
                       <div key={item.id} className="flex items-center justify-between text-xs px-3 py-2 rounded-lg bg-muted/20 border border-border">
-                        <span className="text-foreground">{item.qty}× {item.name}</span>
+                        <span className="text-foreground">
+                          {item.qty}× {item.name}
+                          {item.khmerName?.trim() ? (
+                            <span className="block text-[11px] text-muted-foreground">{item.khmerName}</span>
+                          ) : null}
+                        </span>
                         <span className="text-muted-foreground text-tabular">${(item.unitPrice * item.qty).toFixed(2)}</span>
                       </div>
                     ))}
@@ -274,7 +280,7 @@ export default function ShiftCashClient() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
                   {occupiedBillTables.map(t => {
                     const items = tableOrders[t.id] || [];
-                    const total = items.reduce((a, i) => i.status !== 'Voided' ? a + i.unitPrice * i.qty : a, 0) * 1.21;
+                    const total = items.reduce((a, i) => i.status !== 'Voided' ? a + i.unitPrice * i.qty : a, 0) * venueGrossMultiplier();
                     return (
                       <div
                         key={t.id}

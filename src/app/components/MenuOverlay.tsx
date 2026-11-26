@@ -11,6 +11,7 @@ import { menuApi } from '@/lib/api/client';
 import { compareMenuItemId } from '@/lib/api/mappers';
 import type { MenuItem, MenuCategory } from '@/lib/api/types';
 import { toast } from 'sonner';
+import BilingualItemName from '@/components/BilingualItemName';
 
 interface MenuOverlayProps {
   table: TableData;
@@ -178,7 +179,10 @@ export default function MenuOverlay({
           activeCategory === 'All'
           || item.categoryId === activeCategory
           || item.category === activeCategory;
-        const matchSearch = !search || item.name.toLowerCase().includes(search.toLowerCase());
+        const q = search.toLowerCase();
+        const matchSearch = !search
+          || item.name.toLowerCase().includes(q)
+          || (item.khmerName ?? '').toLowerCase().includes(q);
         return matchCat && matchSearch;
       })
       .sort((a, b) => compareMenuItemId(a.id, b.id));
@@ -258,6 +262,7 @@ export default function MenuOverlay({
         menuItemId: c.menuItem.id,
         categoryId: c.menuItem.categoryId,
         name: c.menuItem.name,
+        khmerName: c.menuItem.khmerName?.trim() || undefined,
         qty: c.qty,
         unitPrice,
         status: 'Queued' as const,
@@ -383,7 +388,7 @@ export default function MenuOverlay({
                           ) : null}
                         </div>
                         <p className="text-sm font-medium text-foreground leading-snug break-words">
-                          {item.name}
+                          <BilingualItemName name={item.name} khmerName={item.khmerName} />
                         </p>
                         {!multiSize && item.sizes?.[0]?.label ? (
                           <p className="text-[10px] text-muted-foreground mt-0.5">{item.sizes[0].label}</p>
@@ -456,7 +461,7 @@ export default function MenuOverlay({
                         <div className="flex items-start gap-2">
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold text-foreground leading-snug break-words">
-                              {entry.menuItem.name}
+                              <BilingualItemName name={entry.menuItem.name} khmerName={entry.menuItem.khmerName} />
                             </p>
                             {sizeLabel ? (
                               <p className="text-[10px] font-medium text-primary mt-0.5">{sizeLabel}</p>

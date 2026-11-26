@@ -47,7 +47,7 @@ console.log('');
 
 const child = spawn(
   nextBin,
-  ['dev', '-p', String(PORT), '-H', host],
+  ['dev', '--turbopack', '-p', String(PORT), '-H', host],
   {
     stdio: 'inherit',
     cwd: root,

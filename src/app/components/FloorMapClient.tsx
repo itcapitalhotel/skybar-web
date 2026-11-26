@@ -19,6 +19,7 @@ const MenuOverlay = dynamic(() => import('./MenuOverlay'));
 const GuestInfoModal = dynamic(() => import('./GuestInfoModal'));
 import { TableData, OrderItem, TableShape, ZoneMeta } from './floorData';
 import { tablesApi, ordersApi, zonesApi, bookingsApi, menuApi } from '@/lib/api/client';
+import { applyVenueRates, loadVenueRates, DEFAULT_VENUE_RATES } from '@/lib/venueRates';
 import { getWsBaseUrl } from '@/lib/api/config';
 import type { TableData as ApiTableData, ZoneData, Booking } from '@/lib/api/types';
 import { applyBookingStatus, localDateString } from '@/lib/bookingTableStatus';
@@ -124,6 +125,7 @@ export default function FloorMapClient() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [tableOrders, setTableOrders] = useState<Record<string, OrderItem[]>>({});
   const [tableOrderTotals, setTableOrderTotals] = useState<Record<string, number>>({});
+  const [venueRates, setVenueRates] = useState(DEFAULT_VENUE_RATES);
   /** API order id per table (from GET/POST orders — not client UUID) */
   const [tableOrderIds, setTableOrderIds] = useState<Record<string, string>>({});
   const [editMode, setEditMode] = useState(false);
@@ -158,6 +160,10 @@ export default function FloorMapClient() {
   const reservedViewRef = React.useRef(new Map<string, TableData>());
   const wsPatchesRef = React.useRef(new Map<string, { status: TableData['status']; guests?: number; orderTotal?: number }>());
   const wsFrameRef = React.useRef(0);
+
+  useEffect(() => {
+    void loadVenueRates().then(setVenueRates);
+  }, []);
 
   const fetchBookings = useCallback(async () => {
     try {
@@ -496,12 +502,15 @@ export default function FloorMapClient() {
   );
 
   const currentItems = selectedTable ? (tableOrders[selectedTable.id] || []) : [];
+  const currentBill = applyVenueRates(
+    currentItems.reduce((a, i) => (i.status !== 'Voided' ? a + i.unitPrice * i.qty : a), 0),
+    venueRates,
+  );
   const currentTotal = (() => {
     if (!selectedTable) return 0;
     const fromApi = tableOrderTotals[selectedTable.id];
     if (fromApi != null && Number.isFinite(fromApi)) return fromApi;
-    const sub = currentItems.reduce((a, i) => i.status !== 'Voided' ? a + i.unitPrice * i.qty : a, 0);
-    return sub * 1.21;
+    return currentBill.total;
   })();
 
   const handleVoidItem = async (itemId: string, reason: string) => {
@@ -554,6 +563,7 @@ export default function FloorMapClient() {
       items: [{
         menuItemId,
         name: item.name,
+        khmerName: item.khmerName,
         qty,
         unitPrice: item.unitPrice,
         ...(item.categoryId ? { categoryId: item.categoryId } : {}),
@@ -686,6 +696,7 @@ export default function FloorMapClient() {
           return {
             menuItemId: i.menuItemId ?? i.id,
             name: i.name,
+            khmerName: i.khmerName,
             qty: i.qty,
             unitPrice: i.unitPrice,
             categoryId: i.categoryId,
@@ -1210,6 +1221,9 @@ export default function FloorMapClient() {
             onClose={() => setPaymentOpen(false)}
             onPaymentComplete={handlePaymentComplete}
             total={currentTotal}
+            subtotal={currentBill.subtotal}
+            serviceCharge={currentBill.serviceCharge}
+            vat={currentBill.vat}
             tableId={selectedTable.id}
             guestCount={Math.max(1, selectedTable.guests ?? 1)}
             orderLineItems={currentItems

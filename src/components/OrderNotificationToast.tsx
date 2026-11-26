@@ -8,7 +8,7 @@ export interface OrderNotification {
   tableLabel: string;
   zone: string;
   staff: string;
-  items: { name: string; qty: number }[];
+  items: { name: string; khmerName?: string; qty: number }[];
   timestamp: Date;
 }
 
@@ -114,7 +114,12 @@ function OrderToastCard({
           {notification.items.map((item, i) => (
             <div key={i} className="flex items-center gap-2">
               <UtensilsCrossed size={10} className="text-muted-foreground flex-shrink-0" />
-              <span className="text-xs text-foreground">{item.name}</span>
+              <span className="text-xs text-foreground">
+                {item.name}
+                {item.khmerName?.trim() ? (
+                  <span className="block text-[10px] text-muted-foreground">{item.khmerName}</span>
+                ) : null}
+              </span>
               <span className="ml-auto text-xs font-semibold text-emerald-400">×{item.qty}</span>
             </div>
           ))}

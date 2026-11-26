@@ -80,6 +80,10 @@ const nextConfig = {
     ignoreDuringBuilds: true,
   },
 
+  experimental: {
+    optimizePackageImports: ['lucide-react', 'recharts', 'date-fns', '@heroicons/react'],
+  },
+
   images: {
     remotePatterns: imageHosts,
     minimumCacheTTL: 60,

@@ -48,6 +48,7 @@ export interface OrderItem {
   menuItemId?: string;
   categoryId?: string;
   name: string;
+  khmerName?: string | null;
   qty: number;
   unitPrice: number;
   status: OrderItemStatus;

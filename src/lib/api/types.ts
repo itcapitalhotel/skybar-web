@@ -325,6 +325,7 @@ export type OrderItemStatus = 'Queued' | 'In Prep' | 'Ready' | 'Served' | 'Voide
 export interface OrderItem {
   id: string;
   name: string;
+  khmerName?: string | null;
   qty: number;
   unitPrice: number;
   status: OrderItemStatus;
@@ -372,6 +373,7 @@ export interface VoidReportLine {
   tableId?: string;
   tableLabel?: string;
   name: string;
+  khmerName?: string | null;
   qty: number;
   unitPrice: number;
   categoryType?: 'food' | 'drink';
@@ -386,6 +388,7 @@ export interface AddOrderItemsRequest {
   items: Array<{
     menuItemId: string;
     name: string;
+    khmerName?: string | null;
     qty: number;
     unitPrice: number;
     categoryId?: string;
@@ -475,6 +478,7 @@ export type KDSStatus = 'Queued' | 'In Prep' | 'Ready';
 export interface KDSItem {
   id: string;
   name: string;
+  khmerName?: string | null;
   qty: number;
   notes?: string;
   priority?: boolean;
@@ -503,6 +507,7 @@ export interface MenuItemSize {
 export interface ApiMenuItem {
   id: string;
   name: string;
+  khmerName?: string | null;
   categoryId: string;
   category: string;
   image?: string;
@@ -540,6 +545,7 @@ export type UpdateMenuCategoryRequest = Partial<Omit<CreateMenuCategoryRequest, 
 export interface MenuItem {
   id: string;
   name: string;
+  khmerName?: string | null;
   price: number;
   categoryId: string;
   category: string;
@@ -1366,7 +1372,7 @@ export interface PrintLongReportRequest {
   printerName?: string;
   printerIp: string;
   printerPort?: number;
-  range?: 'today' | 'yesterday' | '7d' | '30d';
+  range?: 'today' | 'yesterday' | '7d' | '30d' | 'custom';
   from?: string;
   to?: string;
   timezone?: string;

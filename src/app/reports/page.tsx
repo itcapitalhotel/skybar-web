@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import TopNav from '@/components/TopNav';
 import LockModal from '@/components/LockModal';
 import {
@@ -10,7 +10,7 @@ import {
 import OrderDetailModal from '@/app/reports/OrderDetailModal';
 import ReopenOrderDialog from '@/app/reports/ReopenOrderDialog';
 import SkyBarShopReport from '@/app/reports/SkyBarShopReport';
-import { buildMenuCategoryLookup, buildShopReportCsv } from '@/app/reports/reportDocumentHelpers';
+import { buildMenuCategoryLookup, buildShopReportCsv, DEFAULT_REPORT_RATES, type ReportRates } from '@/app/reports/reportDocumentHelpers';
 import DateRangePicker, { todayRange } from '@/components/DateRangePicker';
 import { toast } from 'sonner';
 import { analyticsApi, configApi, menuApi, menuCategoryApi, ordersApi, tablesApi, zonesApi } from '@/lib/api/client';
@@ -34,6 +34,20 @@ import type {
   ZoneData,
 } from '@/lib/api/types';
 import { buildTableZoneLookup, resolveZoneFromFields } from '@/lib/zoneResolve';
+
+async function mapPool<T, R>(items: T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await run(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
 interface StaffReportRow {
   name: string;
@@ -199,13 +213,19 @@ export default function ReportsPage() {
   const [zones, setZones] = useState<ZoneData[]>([]);
   const [printZoneId, setPrintZoneId] = useState('');
   const [reportPrinter, setReportPrinter] = useState({ name: '', ip: '', port: '9100' });
+  const [venueTimezone, setVenueTimezone] = useState('Asia/Bangkok');
+  const [venueRates, setVenueRates] = useState<ReportRates>(DEFAULT_REPORT_RATES);
   const [printingLong, setPrintingLong] = useState(false);
+  const reportGen = useRef(0);
 
   const loadReport = useCallback(async () => {
+    const gen = ++reportGen.current;
+    const current = () => gen === reportGen.current;
     setLoading(true);
     setFetchError(false);
     try {
-      await ensureStaffNameCache({ force: true });
+      await ensureStaffNameCache();
+      if (!current()) return;
       const params = { range: 'custom' as const, from: dateFrom, to: dateTo };
       const [analytics, breakdown] = await Promise.all([
         analyticsApi.summary(params),
@@ -262,26 +282,28 @@ export default function ReportsPage() {
       setStaffRows(perf.map(staffRow));
       setOrderRows(orders);
       setReportGeneratedAt(Date.now());
-
-      try {
-        const [categories, menuItems] = await Promise.all([
-          menuCategoryApi.list(),
-          menuApi.list(),
-        ]);
-        setMenuLookup(buildMenuCategoryLookup(categories, menuItems));
-      } catch {
-        setMenuLookup(undefined);
-      }
+      setLoading(false);
 
       setLoadingDetails(true);
-      const [tables, zones] = await Promise.all([
+      const [categories, menuItems, tables, zoneList, batch] = await Promise.all([
+        menuCategoryApi.list().catch(() => []),
+        menuApi.list().catch(() => []),
         tablesApi.list().catch(() => [] as TableData[]),
         zonesApi.list().catch(() => [] as ZoneData[]),
+        analyticsApi.checkDetails(params).catch(() => null),
       ]);
-      const zoneLookup = buildTableZoneLookup(tables, zones);
+      if (!current()) return;
+      if (categories.length || menuItems.length) {
+        setMenuLookup(buildMenuCategoryLookup(categories, menuItems));
+      }
+      if (batch) {
+        setOrderDetails(batch);
+        setLoadingDetails(false);
+        return;
+      }
+      const zoneLookup = buildTableZoneLookup(tables, zoneList);
 
-      const details = await Promise.all(
-        orders.map(async (o) => {
+      const details = await mapPool(orders, 4, async (o) => {
           const siblings = groups.get(checkKey({
             orderId: o.orderId,
             paymentId: o.paymentId,
@@ -310,7 +332,7 @@ export default function ReportsPage() {
                 tableLabel: detail.tableLabel || o.tableLabel,
               },
               zoneLookup,
-              zones,
+              zoneList,
             ).zone;
             return {
               ...withTenders,
@@ -323,7 +345,7 @@ export default function ReportsPage() {
                 tableLabel: o.tableLabel,
               },
               zoneLookup,
-              zones,
+              zoneList,
             ).zone;
             return {
               paymentId: o.paymentId,
@@ -346,11 +368,12 @@ export default function ReportsPage() {
               payments: mergeTenders(undefined, siblings),
             } satisfies AnalyticsTransactionDetail;
           }
-        }),
-      );
+      });
+      if (!current()) return;
       setOrderDetails(details);
       setLoadingDetails(false);
     } catch {
+      if (!current()) return;
       setFetchError(true);
       setStaffRows([]);
       setOrderRows([]);
@@ -359,7 +382,10 @@ export default function ReportsPage() {
       setMenuLookup(undefined);
       setLoadingDetails(false);
     } finally {
-      setLoading(false);
+      if (current()) {
+        setLoading(false);
+        setLoadingDetails(false);
+      }
     }
   }, [dateFrom, dateTo]);
 
@@ -376,6 +402,15 @@ export default function ReportsPage() {
           name: config.reportPrinterName ?? '',
           ip: config.reportPrinterIp ?? '',
           port: String(config.reportPrinterPort ?? 9100),
+        });
+        if (config.timezone) {
+          setVenueTimezone(config.timezone);
+        }
+        const sc = Number(config.serviceCharge);
+        const vat = Number(config.vatRate);
+        setVenueRates({
+          serviceChargePercent: Number.isFinite(sc) ? sc : DEFAULT_REPORT_RATES.serviceChargePercent,
+          vatPercent: Number.isFinite(vat) ? vat : DEFAULT_REPORT_RATES.vatPercent,
         });
       })
       .catch(() => { /* print stays blocked until a printer IP is saved */ });
@@ -428,6 +463,7 @@ export default function ReportsPage() {
       new Date(reportGeneratedAt ?? Date.now()),
       menuLookup,
       paymentBreakdown,
+      venueRates,
     );
     const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -454,8 +490,10 @@ export default function ReportsPage() {
         printerName: reportPrinter.name.trim() || undefined,
         printerIp,
         printerPort: port,
+        range: 'custom',
         from: dateFrom,
         to: dateTo,
+        timezone: venueTimezone,
         zoneId: printZoneId || undefined,
       });
       if (result.printed) {
@@ -576,6 +614,7 @@ export default function ReportsPage() {
           orderDetails={filteredOrderDetails}
           paymentBreakdown={paymentBreakdown}
           menuLookup={menuLookup}
+          rates={venueRates}
           loading={loading || loadingDetails}
           onViewOrder={(paymentId) => {
             const row = orderRows.find((o) => o.paymentId === paymentId);

@@ -1,5 +1,7 @@
 /** Helpers for POST /payments/split — each split needs disjoint non-empty itemIds. */
 
+import { venueGrossMultiplier } from '@/lib/venueRates';
+
 export interface SplitLineItem {
   id: string;
   qty: number;
@@ -47,7 +49,7 @@ export function lineSubtotal(item: SplitLineItem): number {
   return item.price * item.qty;
 }
 
-const TAX_MULTIPLIER = 1.21;
+const TAX_MULTIPLIER = venueGrossMultiplier();
 
 /** Greedy partition by line value into N disjoint groups. */
 export function partitionItemsEvenly(items: SplitLineItem[], guestCount: number): string[][] {

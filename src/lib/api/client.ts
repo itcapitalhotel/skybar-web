@@ -53,27 +53,38 @@ function buildUrl(path: string, params?: Record<string, string | number | boolea
   return url.toString();
 }
 
-/** Lists that rarely change. Tables, bookings, and orders stay uncached. */
-const GET_CACHE_TTL_MS: Record<string, number> = {
-  '/auth/me': 60_000,
-  '/zones': 60_000,
-  '/menu': 120_000,
-  '/menu/categories': 120_000,
-};
+/**
+ * Short caches for reads that do not change every second.
+ * Tables, orders, bookings, payments, shifts, and the live floor stay uncached.
+ */
+const GET_CACHE_RULES: { prefix: string; ttl: number }[] = [
+  { prefix: '/auth/me', ttl: 60_000 },
+  { prefix: '/zones', ttl: 60_000 },
+  { prefix: '/menu', ttl: 120_000 },
+  { prefix: '/config', ttl: 60_000 },
+  { prefix: '/order-types', ttl: 120_000 },
+  { prefix: '/kitchen-printers', ttl: 60_000 },
+  { prefix: '/users', ttl: 30_000 },
+  { prefix: '/roster', ttl: 30_000 },
+  { prefix: '/analytics', ttl: 20_000 },
+  { prefix: '/dashboard', ttl: 12_000 },
+];
 
 const responseCache = new Map<string, { at: number; data: unknown }>();
 const inflightGets = new Map<string, Promise<unknown>>();
 
 function cacheTtl(path: string): number {
-  if (GET_CACHE_TTL_MS[path]) return GET_CACHE_TTL_MS[path];
-  if (path.startsWith('/menu/categories')) return GET_CACHE_TTL_MS['/menu/categories'];
-  return 0;
+  const rule = GET_CACHE_RULES.find((entry) => path === entry.prefix || path.startsWith(`${entry.prefix}/`));
+  return rule?.ttl ?? 0;
 }
 
 function invalidateResponseCache(path: string) {
   const root = `/${path.split('/').filter(Boolean)[0] ?? ''}`;
+  const refreshReports = root === '/payments' || root === '/orders' || root === '/tables' || root === '/shifts' || root === '/menu';
   for (const key of responseCache.keys()) {
-    if (key.includes(root)) responseCache.delete(key);
+    if (key.includes(root) || (refreshReports && (key.includes('/analytics') || key.includes('/dashboard')))) {
+      responseCache.delete(key);
+    }
   }
 }
 
@@ -284,6 +295,11 @@ function mapOrderLine(row: unknown): OrderItem {
     menuItemId: raw.menuItemId != null ? String(raw.menuItemId) : raw.menu_item_id != null ? String(raw.menu_item_id) : undefined,
     categoryId: raw.categoryId != null ? String(raw.categoryId) : undefined,
     name: String(raw.name ?? ''),
+    khmerName: raw.khmerName != null && String(raw.khmerName).trim()
+      ? String(raw.khmerName).trim()
+      : raw.khmer_name != null && String(raw.khmer_name).trim()
+        ? String(raw.khmer_name).trim()
+        : undefined,
     qty: Number(raw.qty ?? 1),
     unitPrice: Number(raw.unitPrice ?? raw.unit_price ?? 0),
     status: (status === 'In_Prep' ? 'In Prep' : status) as OrderItem['status'],
@@ -632,6 +648,11 @@ export const analyticsApi = {
     get<AnalyticsSummary['staffPerformance']>('/analytics/staff-performance', analyticsParams(params)),
   transactions: (params?: AnalyticsQueryParams) =>
     get<AnalyticsTransaction[]>('/analytics/transactions', analyticsParams(params)),
+  /** Every check in the range, one request. */
+  checkDetails: async (params?: AnalyticsQueryParams) => {
+    const rows = await get<Record<string, unknown>[]>('/analytics/check-details', analyticsParams(params));
+    return (rows ?? []).map((raw) => normalizeOrderDetailResponse(raw));
+  },
   printLongReport: (data: PrintLongReportRequest) =>
     post<PrintLongReportResponse>('/analytics/report/print', data),
   getTransaction: async (paymentId: string) => {

@@ -76,6 +76,64 @@ export interface FinancialTotals {
   grandTotal: number;
 }
 
+/** Venue % rates used to rebuild SC / VAT on reports. Cambodia VAT is 10% so tax exceeds 10% service. */
+export interface ReportRates {
+  serviceChargePercent: number;
+  vatPercent: number;
+}
+
+export const DEFAULT_REPORT_RATES: ReportRates = {
+  serviceChargePercent: 5,
+  vatPercent: 10,
+};
+
+function paymentTenderAmount(payment: { amount?: number | null; total?: number | null }): number {
+  return roundReportMoney(Number(payment.amount ?? payment.total ?? 0));
+}
+
+function billedNet(detail: AnalyticsTransactionDetail): number {
+  let best = 0;
+  for (const payment of detail.payments ?? []) {
+    const sub = Number(payment.subtotal ?? 0);
+    if (Number.isFinite(sub) && sub > best) best = sub;
+  }
+  if (best > 0) return roundReportMoney(best);
+  return roundReportMoney(Number(detail.subtotal ?? 0));
+}
+
+/** Cash actually taken: every tender on the check. */
+export function collectedTotal(detail: AnalyticsTransactionDetail): number {
+  const payments = detail.payments ?? [];
+  if (payments.length > 0) {
+    return roundReportMoney(payments.reduce((sum, payment) => sum + paymentTenderAmount(payment), 0));
+  }
+  return roundReportMoney(Number(detail.total ?? detail.amount ?? 0));
+}
+
+export function settleCheckFinancials(
+  detail: AnalyticsTransactionDetail,
+  rates: ReportRates = DEFAULT_REPORT_RATES,
+): {
+  subtotal: number;
+  serviceCharge: number;
+  vat: number;
+  discount: number;
+  billTotal: number;
+  grandTotal: number;
+  collected: number;
+} {
+  const subtotal = billedNet(detail);
+  const discount = discountAmount(detail);
+  const collected = collectedTotal(detail);
+  const scPct = Number(rates.serviceChargePercent);
+  const vatPct = Number(rates.vatPercent);
+  const serviceCharge = roundReportMoney(subtotal * (Number.isFinite(scPct) ? scPct : 5) / 100);
+  const vat = roundReportMoney((subtotal + serviceCharge) * (Number.isFinite(vatPct) ? vatPct : 10) / 100);
+  const billTotal = roundReportMoney(subtotal + serviceCharge + vat);
+  const grandTotal = roundReportMoney(Math.max(0, billTotal - discount));
+  return { subtotal, serviceCharge, vat, discount, billTotal, grandTotal, collected };
+}
+
 export interface CategoryTypeSalesTotals {
   food: number;
   drink: number;
@@ -209,7 +267,10 @@ export function aggregateSalesByCategoryType(
   return { food, drink };
 }
 
-export function aggregateFinancials(details: AnalyticsTransactionDetail[]): FinancialTotals {
+export function aggregateFinancials(
+  details: AnalyticsTransactionDetail[],
+  rates: ReportRates = DEFAULT_REPORT_RATES,
+): FinancialTotals {
   let subtotal = 0;
   let serviceCharge = 0;
   let vat = 0;
@@ -218,19 +279,25 @@ export function aggregateFinancials(details: AnalyticsTransactionDetail[]): Fina
   let billTotal = 0;
   let grandTotal = 0;
   for (const d of uniqueChecks(details)) {
+    const settled = settleCheckFinancials(d, rates);
     const raw = d as unknown as Record<string, unknown>;
-    subtotal += Number(d.subtotal ?? raw.subtotal ?? 0);
-    serviceCharge += Number(d.serviceCharge ?? raw.service_charge ?? 0);
-    vat += Number(d.vat ?? 0);
+    subtotal += settled.subtotal;
+    serviceCharge += settled.serviceCharge;
+    vat += settled.vat;
     tips += Number(d.tip ?? raw.tips ?? raw.tip ?? 0);
-    discount += discountAmount(d);
-    billTotal += grossBillTotal(d);
-    grandTotal += chargedTotal(d);
+    discount += settled.discount;
+    billTotal += settled.billTotal;
+    grandTotal += settled.collected > 0 ? settled.collected : settled.grandTotal;
   }
-  if (grandTotal > 0 && subtotal === 0 && serviceCharge === 0 && vat === 0) {
-    subtotal = billTotal || grandTotal;
-  }
-  return { subtotal, serviceCharge, vat, tips, discount, billTotal, grandTotal };
+  return {
+    subtotal: roundReportMoney(subtotal),
+    serviceCharge: roundReportMoney(serviceCharge),
+    vat: roundReportMoney(vat),
+    tips: roundReportMoney(tips),
+    discount: roundReportMoney(discount),
+    billTotal: roundReportMoney(billTotal),
+    grandTotal: roundReportMoney(grandTotal),
+  };
 }
 
 export interface PaymentBreakdownRow {
@@ -352,39 +419,23 @@ export function discountBreakdown(details: Parameters<typeof discountParts>[0][]
 }
 
 /**
- * Amount collected after the discount.
- * The order total is often still the pre-discount bill; the payment amount is what was charged.
+ * Amount collected after the discount — every tender on the check, including mixed cash+card.
  */
-export function chargedTotal(detail: AnalyticsTransactionDetail): number {
-  const gross = roundReportMoney(Number(detail.total ?? detail.amount ?? 0));
-  const discount = discountAmount(detail);
-  const payments = detail.payments ?? [];
-  const paid = payments.length > 0
-    ? roundReportMoney(payments.reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0))
-    : 0;
-
-  if (discount <= 0) {
-    return paid > 0 && gross <= 0 ? paid : gross;
-  }
-  const net = roundReportMoney(Math.max(0, gross - discount));
-  if (paid > 0 && Math.abs(paid - net) <= 0.05) return paid;
-  if (paid > 0 && Math.abs(paid - gross) <= 0.05) return gross;
-  if (paid > 0 && paid < gross) return paid;
-  return net;
+export function chargedTotal(
+  detail: AnalyticsTransactionDetail,
+  rates: ReportRates = DEFAULT_REPORT_RATES,
+): number {
+  const settled = settleCheckFinancials(detail, rates);
+  if (settled.collected > 0) return settled.collected;
+  return settled.grandTotal;
 }
 
-/** Bill before the discount. When no discount was used, this matches the amount collected. */
-export function grossBillTotal(detail: AnalyticsTransactionDetail): number {
-  const built = roundReportMoney(
-    Number(detail.subtotal ?? 0) + Number(detail.serviceCharge ?? 0) + Number(detail.vat ?? 0),
-  );
-  const stored = roundReportMoney(Number(detail.total ?? detail.amount ?? 0));
-  const face = built > stored + 0.05 ? built : stored;
-  const discount = discountAmount(detail);
-  const charged = chargedTotal(detail);
-  if (discount <= 0) return Math.max(face, charged);
-  const rebuilt = roundReportMoney(charged + discount);
-  return face + 0.05 >= rebuilt ? face : rebuilt;
+/** Bill before the discount (net + venue service + VAT on net+service). */
+export function grossBillTotal(
+  detail: AnalyticsTransactionDetail,
+  rates: ReportRates = DEFAULT_REPORT_RATES,
+): number {
+  return settleCheckFinancials(detail, rates).billTotal;
 }
 
 export interface ReportGridRow {
@@ -557,16 +608,20 @@ export function checkPaymentLabel(detail: AnalyticsTransactionDetail): string {
   return tenderDisplayName(detail.method, detail.cardName);
 }
 
-export function buildReportGridRows(details: AnalyticsTransactionDetail[]): ReportGridRow[] {
+export function buildReportGridRows(
+  details: AnalyticsTransactionDetail[],
+  rates: ReportRates = DEFAULT_REPORT_RATES,
+): ReportGridRow[] {
   const ordered = uniqueChecks(details).sort((a, b) => compareOrderId(a.orderId ?? '', b.orderId ?? ''));
   const rows: ReportGridRow[] = [];
   for (const d of ordered) {
     const items = orderItems(d);
-    const subtotal = Number(d.subtotal ?? 0);
-    const serviceCharge = Number(d.serviceCharge ?? 0);
-    const vat = Number(d.vat ?? 0);
-    const orderTotal = grossBillTotal(d);
-    const totalAfterDiscount = chargedTotal(d);
+    const settled = settleCheckFinancials(d, rates);
+    const subtotal = settled.subtotal;
+    const serviceCharge = settled.serviceCharge;
+    const vat = settled.vat;
+    const orderTotal = settled.billTotal;
+    const totalAfterDiscount = settled.collected > 0 ? settled.collected : settled.grandTotal;
     const guests = Number(d.guestCount ?? d.covers ?? 1) || 1;
     const raw = d as unknown as Record<string, unknown>;
     const zoneLabel = String(
@@ -698,15 +753,16 @@ export function buildShopReportCsv(
   generatedAt: Date,
   menuLookup?: MenuCategoryLookup,
   paymentBreakdown?: { name: string; value: number; method?: string | null; cardName?: string | null }[],
+  rates: ReportRates = DEFAULT_REPORT_RATES,
 ): string {
   const lines: string[] = [];
   const checks = uniqueChecks(orderDetails);
-  const financial = aggregateFinancials(checks);
+  const financial = aggregateFinancials(checks, rates);
   const discountLines = discountBreakdown(checks);
   const paymentRows = paymentBreakdown?.length
     ? paymentRowsFromApi(paymentBreakdown, checks)
     : paymentMethodBreakdown(checks);
-  const gridRows = buildReportGridRows(checks);
+  const gridRows = buildReportGridRows(checks, rates);
   const colTotals = gridColumnTotals(gridRows);
   const totalOrders = checks.length;
   const totalGuests = checks.reduce(
@@ -734,10 +790,10 @@ export function buildShopReportCsv(
 
   lines.push(csvRow(['Financial Summary']));
   lines.push(csvRow(['Label', 'Amount']));
-  lines.push(csvRow(['Subtotal', moneyCsv(financial.subtotal)]));
+  lines.push(csvRow(['Net Sales', moneyCsv(financial.subtotal)]));
   lines.push(csvRow(['Service Charge', moneyCsv(financial.serviceCharge)]));
-  lines.push(csvRow(['VAT', moneyCsv(financial.vat)]));
-  lines.push(csvRow(['Total', moneyCsv(financial.billTotal)]));
+  lines.push(csvRow(['Tax Collected', moneyCsv(financial.vat)]));
+  lines.push(csvRow(['Total Revenue', moneyCsv(financial.billTotal)]));
   lines.push(csvRow(['Discount', moneyCsv(financial.discount)]));
   for (const line of discountLines) {
     lines.push(csvRow([line.type, moneyCsv(line.amount)]));

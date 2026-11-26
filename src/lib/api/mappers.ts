@@ -20,6 +20,7 @@ export function mapMenuItem(item: ApiMenuItem): MenuItem {
   return {
     id: item.id,
     name: item.name,
+    khmerName: item.khmerName?.trim() || undefined,
     price: defaultPrice,
     categoryId: item.categoryId,
     category: slug,

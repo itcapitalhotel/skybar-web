@@ -55,8 +55,8 @@ const CURRENCIES = [
 ];
 
 const DEFAULT_CONFIG: ConfigState = {
-  serviceCharge: '10',
-  vatRate: '7',
+  serviceCharge: '5',
+  vatRate: '10',
   currency: 'USD',
   currencySymbol: '$',
   printerIp: '192.168.1.100',
@@ -627,11 +627,11 @@ export default function AdminConfigPage() {
                       </div>
                       <div className="flex justify-between text-cyan-400">
                         <span>VAT ({config.vatRate}%)</span>
-                        <span>+{config.currencySymbol}{(1000 * parseFloat(config.vatRate || '0') / 100).toFixed(2)}</span>
+                        <span>+{config.currencySymbol}{(1000 * (1 + parseFloat(config.serviceCharge || '0') / 100) * parseFloat(config.vatRate || '0') / 100).toFixed(2)}</span>
                       </div>
                       <div className="flex justify-between font-semibold text-foreground border-t border-border pt-1.5 mt-1.5">
                         <span>Total</span>
-                        <span>{config.currencySymbol}{(1000 * (1 + parseFloat(config.serviceCharge || '0') / 100 + parseFloat(config.vatRate || '0') / 100)).toFixed(2)}</span>
+                        <span>{config.currencySymbol}{(1000 * (1 + parseFloat(config.serviceCharge || '0') / 100) * (1 + parseFloat(config.vatRate || '0') / 100)).toFixed(2)}</span>
                       </div>
                     </div>
                   </div>

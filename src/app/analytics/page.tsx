@@ -738,10 +738,12 @@ export default function AnalyticsPage() {
         granularity: toApiGranularity(nextGranularity),
       });
 
-      const [zones, summary, series] = await Promise.all([
+      const [zones, summary, series, pay, zr] = await Promise.all([
         loadZones(),
         analyticsApi.summary(query),
         analyticsApi.revenueSeries(seriesQuery).catch(() => [] as AnalyticsRevenueSeriesPoint[]),
+        analyticsApi.paymentBreakdown(query).catch(() => [] as PaymentBreakdown[]),
+        analyticsApi.zoneRevenue(query).catch(() => [] as AnalyticsZoneRevenue[]),
       ]);
 
       let seriesRows = series ?? [];
@@ -758,18 +760,13 @@ export default function AnalyticsPage() {
       applySummaryPanels(summary, zones);
       setChartData(mapSeriesToChart(seriesRows, nextGranularity, tz));
 
-      // If summary omitted payment/zone, try dedicated dated endpoints
-      if (!(summary.paymentBreakdown?.length)) {
-        const pay = await analyticsApi.paymentBreakdown(query).catch(() => [] as PaymentBreakdown[]);
-        if (pay.length) setPaymentBreakdown(colorizePayments(pay));
+      if (!(summary.paymentBreakdown?.length) && pay.length) {
+        setPaymentBreakdown(colorizePayments(pay));
       }
-      if (!(summary.zoneRevenue?.length)) {
-        const zr = await analyticsApi.zoneRevenue(query).catch(() => [] as AnalyticsZoneRevenue[]);
-        if (zr.length) {
-          const zRows = mapZoneRevenueRows(zr, zones);
-          setZoneRevenue(zRows);
-          setZoneOptions(zRows.map((z) => ({ zoneId: z.zoneId, zone: z.zone, color: z.color })));
-        }
+      if (!(summary.zoneRevenue?.length) && zr.length) {
+        const zRows = mapZoneRevenueRows(zr, zones);
+        setZoneRevenue(zRows);
+        setZoneOptions(zRows.map((z) => ({ zoneId: z.zoneId, zone: z.zone, color: z.color })));
       }
     } catch {
       setChartData([]);

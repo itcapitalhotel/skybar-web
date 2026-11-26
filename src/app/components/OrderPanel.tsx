@@ -1,12 +1,14 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeftRight, Trash2, SplitSquareHorizontal, CreditCard, AlertTriangle, CheckCircle2, Clock, XCircle, Users, FileText, Minus, Plus, X, Printer } from 'lucide-react';
 import { TableData, OrderItem, calcOrderTotal } from './floorData';
 import type { UserRole } from '@/lib/api/types';
 import { receiptsApi } from '@/lib/api/client';
 import { getAuthUser } from '@/lib/api/config';
+import { applyVenueRates, loadVenueRates, DEFAULT_VENUE_RATES } from '@/lib/venueRates';
 import { toast } from 'sonner';
+import BilingualItemName from '@/components/BilingualItemName';
 
 interface OrderPanelProps {
   table: TableData | null;
@@ -69,6 +71,11 @@ export default function OrderPanel({
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
   const [printingBill, setPrintingBill] = useState(false);
+  const [rates, setRates] = useState(DEFAULT_VENUE_RATES);
+
+  useEffect(() => {
+    void loadVenueRates().then(setRates);
+  }, []);
 
   if (!table) {
     return (
@@ -84,9 +91,10 @@ export default function OrderPanel({
 
   const activeItems = items.filter(i => i.status !== 'Voided');
   const subtotal = calcOrderTotal(items);
-  const serviceCharge = subtotal * 0.10;
-  const vat = (subtotal + serviceCharge) * 0.10;
-  const total = subtotal + serviceCharge + vat;
+  const billed = applyVenueRates(subtotal, rates);
+  const serviceCharge = billed.serviceCharge;
+  const vat = billed.vat;
+  const total = billed.total;
   const minSpendGap = table.minSpend ? Math.max(0, table.minSpend - subtotal) : 0;
 
   const canSplit = role === 'Admin' || role === 'Manager' || role === 'Supervisor' || role === 'Service' || role === 'Cashier';
@@ -276,7 +284,7 @@ export default function OrderPanel({
                     {item.status === 'Voided' || !onIncreaseItem ? (
                       <span className="font-semibold text-muted-foreground text-tabular">{item.qty}x </span>
                     ) : null}
-                    {item.name}
+                    <BilingualItemName name={item.name} khmerName={item.khmerName} />
                   </p>
                   <div className="flex items-center gap-1.5 flex-wrap mt-1">
                     {item.size ? (
@@ -375,11 +383,11 @@ export default function OrderPanel({
             <span className="text-tabular">${subtotal.toFixed(2)}</span>
           </div>
           <div className="flex justify-between text-xs text-muted-foreground">
-            <span>Service Charge (10%)</span>
+            <span>Service Charge ({rates.serviceChargePercent}%)</span>
             <span className="text-tabular">${serviceCharge.toFixed(2)}</span>
           </div>
           <div className="flex justify-between text-xs text-muted-foreground">
-            <span>VAT (10%)</span>
+            <span>VAT ({rates.vatPercent}%)</span>
             <span className="text-tabular">${vat.toFixed(2)}</span>
           </div>
           <div className="flex justify-between text-sm font-bold text-foreground pt-1.5 border-t border-border">

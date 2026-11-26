@@ -98,7 +98,12 @@ export default function ReceiptPreview({
                 return (
                   <div key={`line-${idx}`} className="space-y-0.5">
                     <div className="flex items-start justify-between gap-2">
-                      <span className="text-gray-900 font-medium break-words min-w-0 flex-1">{item.name}</span>
+                      <span className="text-gray-900 font-medium break-words min-w-0 flex-1">
+                        {item.name}
+                        {item.khmerName?.trim() && item.khmerName.trim() !== item.name ? (
+                          <span className="block text-[11px] text-gray-500">{item.khmerName}</span>
+                        ) : null}
+                      </span>
                       <span className="tabular-nums text-gray-900 shrink-0">{formatMoney(total, currencySymbol)}</span>
                     </div>
                     <p className="text-[10px] text-gray-500 pl-0.5">

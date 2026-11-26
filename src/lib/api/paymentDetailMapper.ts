@@ -82,6 +82,7 @@ function mapItems(raw: unknown): OrderItem[] {
     return {
       id: String(o.id ?? ''),
       name: String(o.name ?? 'Item'),
+      khmerName: str(o.khmerName ?? o.khmer_name),
       qty: num(o.qty) ?? 1,
       unitPrice: num(o.unitPrice ?? o.unit_price) ?? 0,
       status: (o.status as OrderItem['status']) ?? 'Served',

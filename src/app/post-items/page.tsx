@@ -27,6 +27,7 @@ interface SizeRow {
 
 interface ItemFormData {
   name: string;
+  khmerName: string;
   categoryId: string;
   description: string;
   popular: boolean;
@@ -40,6 +41,7 @@ function newSizeRow(label = '', price = ''): SizeRow {
 
 const EMPTY_FORM: ItemFormData = {
   name: '',
+  khmerName: '',
   categoryId: '',
   description: '',
   popular: false,
@@ -81,6 +83,7 @@ function formToPayload(form: ItemFormData): Partial<ApiMenuItem> | null {
 
   return {
     name: form.name.trim(),
+    khmerName: form.khmerName.trim() || null,
     categoryId: form.categoryId,
     description: form.description.trim() || undefined,
     sizes,
@@ -165,6 +168,7 @@ export default function PostItemsPage() {
     const catLabel = labelById[item.categoryId] ?? item.category;
     const matchSearch =
       item.name.toLowerCase().includes(q) ||
+      (item.khmerName ?? '').toLowerCase().includes(q) ||
       catLabel.toLowerCase().includes(q) ||
       item.category.toLowerCase().includes(q) ||
       (item.description?.toLowerCase().includes(q) ?? false);
@@ -186,6 +190,7 @@ export default function PostItemsPage() {
     setEditingItem(item);
     setForm({
       name: item.name,
+      khmerName: item.khmerName ?? '',
       categoryId: item.categoryId,
       description: item.description ?? '',
       popular: Boolean(item.popular),
@@ -432,6 +437,9 @@ export default function PostItemsPage() {
                     <div className="flex items-center gap-2 flex-wrap mb-1">
                       <span className="text-xs font-semibold tabular-nums text-muted-foreground">{item.id}</span>
                       <h3 className="font-semibold text-sm md:text-base text-foreground">{item.name}</h3>
+                      {item.khmerName?.trim() ? (
+                        <span className="text-sm text-muted-foreground">{item.khmerName}</span>
+                      ) : null}
                       <span
                         className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border"
                         style={{ background: 'rgba(100,116,139,0.12)', borderColor: 'rgba(100,116,139,0.25)', color: '#94a3b8' }}
@@ -531,7 +539,7 @@ export default function PostItemsPage() {
                     {editingItem ? 'Edit Menu Item' : 'Post Menu Item'}
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {editingItem ? 'Update name, category, sizes, and prices' : 'Add a name, category, sizes, and prices'}
+                    {editingItem ? 'Update name, Khmer name, category, sizes, and prices' : 'Add a name, Khmer name, category, sizes, and prices'}
                   </p>
                 </div>
                 <button
@@ -551,6 +559,19 @@ export default function PostItemsPage() {
                     className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary"
                     placeholder="Signature Sunset"
                   />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">Khmer name</label>
+                  <input
+                    value={form.khmerName}
+                    onChange={(e) => setForm((p) => ({ ...p, khmerName: e.target.value }))}
+                    className="w-full bg-input border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary"
+                    placeholder="ឈ្មោះខ្មែរ"
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Shown on the order screen and printed on kitchen / cancel tickets.
+                  </p>
                 </div>
 
                 <div>

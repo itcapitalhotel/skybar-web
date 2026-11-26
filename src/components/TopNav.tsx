@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import AppLogo from '@/components/ui/AppLogo';
@@ -47,6 +47,21 @@ export default function TopNav({ onLockTerminal }: TopNavProps) {
   const currentRoleData = ROLES.find((r) => r.value === currentRole)!;
   const visibleTabs = NAV_TABS.filter((tab) => tab.roles.includes(currentRole));
 
+  useEffect(() => {
+    const hrefs = visibleTabs.map((tab) => tab.href).filter((href) => href !== pathname);
+    let index = 0;
+    const timer = window.setInterval(() => {
+      const href = hrefs[index];
+      index += 1;
+      if (!href) {
+        window.clearInterval(timer);
+        return;
+      }
+      router.prefetch(href);
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [pathname, router, currentRole]);
+
   const handleLogout = async () => {
     try {
       await authApi.logout();
@@ -77,6 +92,7 @@ export default function TopNav({ onLockTerminal }: TopNavProps) {
                 <Link
                   key={`nav-${tab.href}`}
                   href={tab.href}
+                  prefetch
                   className={`px-2 lg:px-3 py-1.5 rounded-md text-xs lg:text-sm font-medium transition-all duration-150 whitespace-nowrap ${
                     isActive
                       ? 'bg-primary/15 text-primary'
@@ -146,6 +162,7 @@ export default function TopNav({ onLockTerminal }: TopNavProps) {
               <Link
                 key={`mobile-nav-${tab.href}`}
                 href={tab.href}
+                prefetch
                 onClick={() => setMobileMenuOpen(false)}
                 className={`px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${
                   isActive

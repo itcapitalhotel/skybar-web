@@ -16,8 +16,10 @@ import {
   paymentMethodBreakdown,
   paymentRowsFromApi,
   uniqueChecks,
+  DEFAULT_REPORT_RATES,
   type MenuCategoryLookup,
   type ReportGridRow,
+  type ReportRates,
 } from '@/app/reports/reportDocumentHelpers';
 import { toast } from 'sonner';
 
@@ -78,6 +80,7 @@ interface SkyBarShopReportProps {
   orderDetails: AnalyticsTransactionDetail[];
   paymentBreakdown?: PaymentBreakdown[];
   menuLookup?: MenuCategoryLookup;
+  rates?: ReportRates;
   loading?: boolean;
   onViewOrder?: (paymentId: string) => void;
   onReopenOrder?: (row: ReportGridRow) => void;
@@ -90,18 +93,19 @@ export default function SkyBarShopReport({
   orderDetails,
   paymentBreakdown,
   menuLookup,
+  rates = DEFAULT_REPORT_RATES,
   loading,
   onViewOrder,
   onReopenOrder,
 }: SkyBarShopReportProps) {
   const checks = uniqueChecks(orderDetails);
-  const financial = aggregateFinancials(checks);
+  const financial = aggregateFinancials(checks, rates);
   const categorySales = aggregateSalesByCategoryType(checks, menuLookup);
   const discountLines = discountBreakdown(checks);
   const paymentRows = paymentBreakdown?.length
     ? paymentRowsFromApi(paymentBreakdown, checks)
     : paymentMethodBreakdown(checks);
-  const gridRows = buildReportGridRows(checks);
+  const gridRows = buildReportGridRows(checks, rates);
   const colTotals = gridColumnTotals(gridRows);
   const totalOrders = checks.length;
   const totalGuests = checks.reduce(
@@ -117,8 +121,8 @@ export default function SkyBarShopReport({
       const row = map.get(name) ?? { checks: 0, guests: 0, total: 0, totalAfterDiscount: 0 };
       row.checks += 1;
       row.guests += Number(detail.guestCount ?? detail.covers ?? 0) || 0;
-      row.total += grossBillTotal(detail);
-      row.totalAfterDiscount += chargedTotal(detail);
+      row.total += grossBillTotal(detail, rates);
+      row.totalAfterDiscount += chargedTotal(detail, rates);
       map.set(name, row);
     }
     return Array.from(map, ([name, row]) => ({ name, ...row }));
@@ -218,10 +222,10 @@ export default function SkyBarShopReport({
               </tr>
             </thead>
             <tbody>
-              <SummaryMetricRow label="Subtotal" value={formatReportMoney(financial.subtotal)} />
-              <SummaryMetricRow label="Service charge" value={formatReportMoney(financial.serviceCharge)} />
-              <SummaryMetricRow label="VAT" value={formatReportMoney(financial.vat)} />
-              <SummaryMetricRow label="Total" value={formatReportMoney(financial.billTotal)} emphasize />
+              <SummaryMetricRow label="Net Sales" value={formatReportMoney(financial.subtotal)} />
+              <SummaryMetricRow label="Service Charge" value={formatReportMoney(financial.serviceCharge)} />
+              <SummaryMetricRow label="Tax Collected" value={formatReportMoney(financial.vat)} />
+              <SummaryMetricRow label="Total Revenue" value={formatReportMoney(financial.billTotal)} emphasize />
               <SummaryMetricRow label="Discount" value={formatReportMoney(financial.discount)} />
               {discountLines.map((line) => (
                 <SummaryMetricRow

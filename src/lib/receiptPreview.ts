@@ -2,6 +2,7 @@ import type { PaymentMethod, ProcessPaymentResponse } from '@/lib/api/types';
 
 export interface ReceiptLineItem {
   name: string;
+  khmerName?: string;
   qty: number;
   unitPrice: number;
   size?: string;
@@ -52,6 +53,9 @@ function mapItems(raw: unknown): ReceiptLineItem[] {
     const o = row as Record<string, unknown>;
     return {
       name: String(o.name ?? 'Item'),
+      khmerName: o.khmerName != null || o.khmer_name != null
+        ? String(o.khmerName ?? o.khmer_name)
+        : undefined,
       qty: num(o.qty) ?? 1,
       unitPrice: num(o.unitPrice ?? o.unit_price) ?? 0,
       size: o.size != null ? String(o.size) : undefined,

@@ -37,7 +37,8 @@ function formatDisplayRange(from: string, to: string): string {
 }
 
 const PRESETS: { id: string; label: string; range: () => DateRangeValue }[] = [
-  { id: 'today', label: 'Today', range: () => { const t = localDateString(); return { from: t, to: t }; } },
+  { id: 'today', label: 'Today', range: () => { const t = businessDateString(); return { from: t, to: t }; } },
+  { id: 'yesterday', label: 'Yesterday', range: yesterdayRange },
   {
     id: '7d',
     label: '7 days',
@@ -345,4 +346,13 @@ export function businessDateString(date = new Date()): string {
 export function todayRange(): DateRangeValue {
   const t = businessDateString();
   return { from: t, to: t };
+}
+
+/** Previous SkyBar business date (5:00 AM boundary). */
+export function yesterdayRange(): DateRangeValue {
+  const [year, month, day] = businessDateString().split('-').map(Number);
+  const previous = new Date(year, month - 1, day);
+  previous.setDate(previous.getDate() - 1);
+  const ymd = localDateString(previous);
+  return { from: ymd, to: ymd };
 }

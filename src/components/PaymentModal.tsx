@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { X, CreditCard, Banknote, QrCode, BedDouble, CheckCircle2, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { menuApi, menuCategoryApi, paymentsApi } from '@/lib/api/client';
+import { applyVenueRates, loadVenueRates, venueGrossMultiplier, DEFAULT_VENUE_RATES } from '@/lib/venueRates';
 import { getAuthUser } from '@/lib/api/config';
 import type { PaymentMethod } from '@/lib/api/types';
 import { formatChangeRiel } from '@/lib/receiptMoney';
@@ -206,6 +207,7 @@ export default function PaymentModal({
   const [drinkSubtotalCap, setDrinkSubtotalCap] = useState<number | null>(null);
   const [processing, setProcessing] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [rates, setRates] = useState(DEFAULT_VENUE_RATES);
 
   const discountableItems = (orderLineItems ?? []).filter(
     (it) => it.id && (it.status == null || it.status !== 'Voided'),
@@ -213,6 +215,7 @@ export default function PaymentModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    void loadVenueRates().then(setRates);
     setSelectedMethods(['card']);
     setTenderAmounts({});
     setCashReceived('');
@@ -404,9 +407,10 @@ export default function PaymentModal({
 
     setProcessing(true);
     try {
-      const resolvedSubtotal = subtotal ?? total / 1.21;
-      const resolvedService = serviceCharge ?? resolvedSubtotal * 0.1;
-      const resolvedVat = vat ?? (resolvedSubtotal + resolvedService) * 0.07;
+      const billed = applyVenueRates(subtotal ?? total / venueGrossMultiplier(rates), rates);
+      const resolvedSubtotal = subtotal ?? billed.subtotal;
+      const resolvedService = serviceCharge ?? billed.serviceCharge;
+      const resolvedVat = vat ?? billed.vat;
 
       const authUser = getAuthUser();
       const staffId = authUser?.id;

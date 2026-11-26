@@ -5,6 +5,7 @@ import { X, Merge, Check, ChevronRight, Users, DollarSign, AlertCircle } from 'l
 import { toast } from 'sonner';
 import { TableData, OrderItem } from '@/app/components/floorData';
 import { tablesApi } from '@/lib/api/client';
+import { venueGrossMultiplier } from '@/lib/venueRates';
 
 interface MergeTablesModalProps {
   isOpen: boolean;
@@ -43,7 +44,7 @@ export default function MergeTablesModal({ isOpen, onClose, tables, tableOrders,
       .map(i => ({ ...i, sourceLabel: tbl?.label ?? tid }));
   });
 
-  const mergedTotal = allMergedItems.reduce((a, i) => a + i.unitPrice * i.qty, 0) * 1.21;
+  const mergedTotal = allMergedItems.reduce((a, i) => a + i.unitPrice * i.qty, 0) * venueGrossMultiplier();
   const totalGuests = selectedTables.reduce((a, t) => a + t.guests, 0);
 
   const handleConfirm = async () => {
@@ -144,7 +145,7 @@ export default function MergeTablesModal({ isOpen, onClose, tables, tableOrders,
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {tables.map(t => {
                     const items = (tableOrders[t.id] || []).filter(i => i.status !== 'Voided');
-                    const total = items.reduce((a, i) => a + i.unitPrice * i.qty, 0) * 1.21;
+                    const total = items.reduce((a, i) => a + i.unitPrice * i.qty, 0) * venueGrossMultiplier();
                     const isSelected = selectedIds.includes(t.id);
                     const isPrimary = primaryId === t.id;
 
@@ -260,7 +261,12 @@ export default function MergeTablesModal({ isOpen, onClose, tables, tableOrders,
                           <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 border border-violet-500/20 font-semibold shrink-0">
                             {item.sourceLabel}
                           </span>
-                          <span className="text-foreground truncate">{item.qty}× {item.name}</span>
+                          <span className="text-foreground truncate">
+                            {item.qty}× {item.name}
+                            {item.khmerName?.trim() ? (
+                              <span className="block text-[11px] text-muted-foreground truncate">{item.khmerName}</span>
+                            ) : null}
+                          </span>
                         </div>
                         <span className="text-muted-foreground text-tabular shrink-0 ml-2">${(item.unitPrice * item.qty).toFixed(2)}</span>
                       </div>
