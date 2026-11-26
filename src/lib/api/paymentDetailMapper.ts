@@ -8,6 +8,7 @@ import type {
   OrderSplitSession,
   OrderTransferRecord,
 } from './types';
+import { visibleTableLabel } from '@/lib/tableName';
 
 function str(v: unknown): string | undefined {
   if (v == null) return undefined;
@@ -243,7 +244,7 @@ export function normalizeOrderDetailResponse(raw: Record<string, unknown>): Anal
     tableSessionId: str(raw.tableSessionId ?? raw.table_session_id),
     shiftId: str(raw.shiftId ?? raw.shift_id),
     tableId: str(raw.tableId ?? raw.table_id) ?? '',
-    tableLabel: str(raw.tableLabel ?? raw.table_label) ?? '',
+    tableLabel: visibleTableLabel(str(raw.tableLabel ?? raw.table_label)),
     status: str(raw.status),
     itemCount: num(raw.itemCount ?? raw.item_count),
     zoneId: str(raw.zoneId ?? raw.zone_id),

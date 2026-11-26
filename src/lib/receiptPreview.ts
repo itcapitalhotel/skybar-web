@@ -1,4 +1,5 @@
 import type { PaymentMethod, ProcessPaymentResponse } from '@/lib/api/types';
+import { humanTableName } from '@/lib/tableLabels';
 
 export interface ReceiptLineItem {
   name: string;
@@ -83,7 +84,7 @@ export function mapReceiptApiToPreview(raw: Record<string, unknown>): ReceiptPre
   return {
     paymentId: raw.paymentId != null ? String(raw.paymentId) : undefined,
     tableId: raw.tableId != null ? String(raw.tableId) : undefined,
-    tableLabel: raw.tableLabel != null ? String(raw.tableLabel) : undefined,
+    tableLabel: humanTableName(raw.tableLabel != null ? String(raw.tableLabel) : undefined),
     zoneLabel: raw.zoneLabel != null ? String(raw.zoneLabel) : undefined,
     openedAt: raw.openedAt != null ? String(raw.openedAt) : undefined,
     closedAt: raw.closedAt != null ? String(raw.closedAt) : undefined,

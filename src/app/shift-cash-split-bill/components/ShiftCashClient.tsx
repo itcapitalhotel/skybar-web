@@ -7,6 +7,7 @@ import SplitBillModal from '@/components/SplitBillModal';
 import MergeTablesModal from '@/components/MergeTablesModal';
 import { tablesApi, ordersApi } from '@/lib/api/client';
 import { venueGrossMultiplier } from '@/lib/venueRates';
+import { displayTableLabel } from '@/lib/tableLabels';
 import type { TableData } from '@/lib/api/types';
 import type { TableData as FloorTableData, OrderItem } from '@/app/components/floorData';
 import {
@@ -20,7 +21,7 @@ function apiTableToFloor(t: TableData): FloorTableData {
   const z = (['vip', 'bar', 'terrace', 'cabana'].includes(zone) ? zone : 'bar') as FloorTableData['zone'];
   return {
     id: t.id,
-    label: t.label,
+    label: displayTableLabel(t),
     zone: z,
     status: t.status as FloorTableData['status'],
     guests: t.guestCount ?? t.guests ?? 0,
@@ -330,7 +331,12 @@ export default function ShiftCashClient() {
           tableId={splitTable.id}
           tableLabel={splitTable.label}
           tables={floorTables}
-          onSplitComplete={() => void loadFloor()}
+          onSplitComplete={(created) => {
+            const opened = created?.find((t) => t.splitIndex === 1) ?? created?.[0];
+            void loadFloor().then(() => {
+              if (opened?.id) setSplitTableId(opened.id);
+            });
+          }}
           onItemsMoved={() => void loadFloor()}
           onBillCheckPrinted={() => void loadFloor()}
         />

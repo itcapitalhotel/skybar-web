@@ -9,6 +9,7 @@ import {
   fetchCurrentShift, fetchRecentTransactions, fetchHourlyRevenue,
   type ShiftSummary, type RecentTransaction, type HourlyRevenue,
 } from '@/app/shift-cash-split-bill/components/shiftData';
+import { visibleTableLabel } from '@/lib/tableName';
 
 const METHOD_COLORS: Record<string, string> = {
   Cash: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/25',
@@ -318,7 +319,7 @@ export default function CloseShiftReportPage() {
                 {transactions.map(txn => (
                   <tr key={txn.id} className="border-b border-border/40 hover:bg-muted/20 transition-colors">
                     <td className="py-2 pr-3 text-muted-foreground font-mono">{txn.id}</td>
-                    <td className="py-2 px-3 font-medium text-foreground">{txn.tableLabel}</td>
+                    <td className="py-2 px-3 font-medium text-foreground">{visibleTableLabel(txn.tableLabel) || '—'}</td>
                     <td className="py-2 px-3 text-muted-foreground">{txn.staff}</td>
                     <td className="py-2 px-3">
                       <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-medium w-fit ${METHOD_COLORS[txn.method]}`}>

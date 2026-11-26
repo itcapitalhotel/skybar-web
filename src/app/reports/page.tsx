@@ -34,6 +34,7 @@ import type {
   ZoneData,
 } from '@/lib/api/types';
 import { buildTableZoneLookup, resolveZoneFromFields } from '@/lib/zoneResolve';
+import { visibleTableLabel } from '@/lib/tableName';
 
 async function mapPool<T, R>(items: T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length);
@@ -138,7 +139,7 @@ function normalizeOrderRow(tx: AnalyticsTransaction): OrderReportRow {
     openedAt: fmtDateTime(openedAtIso),
     closedAt: fmtDateTime(closedAtIso),
     closedAtIso,
-    tableLabel: tx.tableLabel || '—',
+    tableLabel: visibleTableLabel(tx.tableLabel) || '—',
     staff,
     method: tx.method,
     amount: Number(tx.amount ?? 0),
@@ -329,7 +330,7 @@ export default function ReportsPage() {
                 zoneLabel: detail.zoneLabel ?? (raw.zone_label as string | undefined),
                 zone: raw.zone as string | undefined,
                 tableId: detail.tableId,
-                tableLabel: detail.tableLabel || o.tableLabel,
+                tableLabel: visibleTableLabel(detail.tableLabel) || visibleTableLabel(o.tableLabel),
               },
               zoneLookup,
               zoneList,
@@ -337,6 +338,7 @@ export default function ReportsPage() {
             return {
               ...withTenders,
               orderId: detail.orderId || o.orderId,
+              tableLabel: visibleTableLabel(detail.tableLabel) || visibleTableLabel(o.tableLabel),
               zoneLabel: zoneLabel !== 'Other' ? zoneLabel : detail.zoneLabel || zoneLabel,
             };
           } catch {
@@ -351,7 +353,7 @@ export default function ReportsPage() {
               paymentId: o.paymentId,
               orderId: o.orderId,
               tableId: '',
-              tableLabel: o.tableLabel,
+              tableLabel: visibleTableLabel(o.tableLabel),
               zoneLabel: zoneLabel !== 'Other' ? zoneLabel : undefined,
               method: o.method,
               amount: o.amount,

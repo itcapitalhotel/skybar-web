@@ -1,5 +1,6 @@
 import { lineTotal } from '@/lib/receiptMoney';
 import { normalizeCategoryType } from '@/lib/menuCategory';
+import { visibleTableLabel } from '@/lib/tableName';
 import type {
   AnalyticsTransactionDetail,
   ApiMenuItem,
@@ -632,7 +633,7 @@ export function buildReportGridRows(
     ).trim() || '—';
     const base = {
       orderLabel: shortOrderLabel(d),
-      tableLabel: d.tableLabel || 'N/A',
+      tableLabel: visibleTableLabel(d.tableLabel) || '—',
       zoneLabel,
       orderTypeName,
       guests,

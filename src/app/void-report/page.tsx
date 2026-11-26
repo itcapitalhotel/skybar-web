@@ -5,6 +5,7 @@ import TopNav from '@/components/TopNav';
 import LockModal from '@/components/LockModal';
 import DateRangePicker, { todayRange } from '@/components/DateRangePicker';
 import { ordersApi } from '@/lib/api/client';
+import { visibleTableLabel } from '@/lib/tableName';
 import type { VoidReportLine } from '@/lib/api/types';
 import { AlertCircle, RefreshCw, Ban } from 'lucide-react';
 
@@ -216,7 +217,7 @@ export default function VoidReportPage() {
                 ) : filtered.map((row) => (
                   <tr key={row.id} className="border-b border-border/40 hover:bg-muted/20 transition-colors">
                     <td className="py-2.5 px-4 text-foreground whitespace-nowrap">{fmtDateTime(row.voidedAt)}</td>
-                    <td className="py-2.5 px-3 text-foreground">{row.tableLabel || row.tableId || '—'}</td>
+                    <td className="py-2.5 px-3 text-foreground">{visibleTableLabel(row.tableLabel) || '—'}</td>
                     <td className="py-2.5 px-3 text-muted-foreground whitespace-nowrap">
                       <span className="text-foreground">{row.orderId || '—'}</span>
                       <span className={`ml-2 inline-flex px-1.5 py-0.5 rounded border text-[10px] font-medium ${

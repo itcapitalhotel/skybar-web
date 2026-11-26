@@ -22,6 +22,8 @@ interface PaymentModalProps {
   serviceCharge?: number;
   vat?: number;
   tableId: string;
+  /** Floor name, such as T1 or T1/1. The id stays on the request only. */
+  tableLabel?: string;
   guestCount?: number;
   /** Open check lines — used to compute food/drink subtotals on pay (optional) */
   orderLineItems?: ReportLineItemLike[];
@@ -184,10 +186,17 @@ export default function PaymentModal({
   serviceCharge,
   vat,
   tableId,
+  tableLabel,
   guestCount = 1,
   orderLineItems,
   onPaymentComplete,
 }: PaymentModalProps) {
+  const tableName = (() => {
+    const name = (tableLabel ?? '').trim();
+    if (!name || name === tableId) return 'Table';
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name)) return 'Table';
+    return name;
+  })();
   const [selectedMethods, setSelectedMethods] = useState<PayMethod[]>(['card']);
   const [tenderAmounts, setTenderAmounts] = useState<Partial<Record<PayMethod, string>>>({});
   const [cashReceived, setCashReceived] = useState('');
@@ -528,7 +537,7 @@ export default function PaymentModal({
               <CheckCircle2 size={32} className="text-emerald-400" />
             </div>
             <h3 className="text-lg font-semibold text-foreground">Payment Successful</h3>
-            <p className="text-muted-foreground text-sm">${amountDue.toFixed(2)} — {tableId}</p>
+            <p className="text-muted-foreground text-sm">${amountDue.toFixed(2)} — {tableName}</p>
             {cashChange > 0 ? (
               <p className="text-amber-400 text-sm font-semibold text-tabular">Change ${cashChange.toFixed(2)}</p>
             ) : null}
@@ -538,7 +547,7 @@ export default function PaymentModal({
             <div className="flex items-center justify-between mb-4 md:mb-5">
               <div>
                 <h3 className="text-base font-semibold text-foreground">Process Payment</h3>
-                <p className="text-xs text-muted-foreground">{tableId} · Total Due</p>
+                <p className="text-xs text-muted-foreground">{tableName} · Total Due</p>
               </div>
               <button onClick={onClose} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all">
                 <X size={16} />

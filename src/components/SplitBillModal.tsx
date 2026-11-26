@@ -16,6 +16,7 @@ import {
   type ExplodedSplitUnit,
 } from '@/lib/splitBillHelpers';
 import { venueGrossMultiplier } from '@/lib/venueRates';
+import { humanTableName } from '@/lib/tableLabels';
 
 interface OrderItem {
   id: string;
@@ -60,11 +61,12 @@ const CARD_BRANDS = ['Visa', 'Amex', 'Master', 'Union'] as const;
 type CardBrand = (typeof CARD_BRANDS)[number];
 
 const MIN_WAYS = 2;
-const MAX_WAYS = 20;
+const MAX_TABLE_SPLITS = 10;
+const MAX_PAY_WAYS = 20;
 
-function clampWays(n: number): number {
+function clampWays(n: number, max = MAX_PAY_WAYS): number {
   if (!Number.isFinite(n)) return MIN_WAYS;
-  return Math.min(MAX_WAYS, Math.max(MIN_WAYS, Math.round(n)));
+  return Math.min(max, Math.max(MIN_WAYS, Math.round(n)));
 }
 
 function equalShares(total: number, count: number): number[] {
@@ -168,9 +170,11 @@ function GuestCardFields({
 function SplitCountField({
   value,
   onChange,
+  max = MAX_TABLE_SPLITS,
 }: {
   value: number;
   onChange: (n: number) => void;
+  max?: number;
 }) {
   const [draft, setDraft] = useState(String(value));
 
@@ -180,7 +184,7 @@ function SplitCountField({
 
   const commit = (raw: string) => {
     const parsed = parseInt(raw, 10);
-    const next = clampWays(Number.isNaN(parsed) ? MIN_WAYS : parsed);
+    const next = clampWays(Number.isNaN(parsed) ? MIN_WAYS : parsed, max);
     onChange(next);
     setDraft(String(next));
   };
@@ -189,7 +193,7 @@ function SplitCountField({
     <div className="flex items-center gap-2">
       <button
         type="button"
-        onClick={() => onChange(clampWays(value - 1))}
+        onClick={() => onChange(clampWays(value - 1, max))}
         disabled={value <= MIN_WAYS}
         className="w-9 h-9 rounded-xl border border-border flex items-center justify-center text-muted-foreground hover:bg-muted/40 disabled:opacity-40"
       >
@@ -199,7 +203,7 @@ function SplitCountField({
         type="number"
         inputMode="numeric"
         min={MIN_WAYS}
-        max={MAX_WAYS}
+        max={max}
         value={draft}
         onChange={e => setDraft(e.target.value)}
         onBlur={() => commit(draft)}
@@ -211,8 +215,8 @@ function SplitCountField({
       />
       <button
         type="button"
-        onClick={() => onChange(clampWays(value + 1))}
-        disabled={value >= MAX_WAYS}
+        onClick={() => onChange(clampWays(value + 1, max))}
+        disabled={value >= max}
         className="w-9 h-9 rounded-xl border border-border flex items-center justify-center text-muted-foreground hover:bg-muted/40 disabled:opacity-40"
       >
         <Plus size={14} />
@@ -253,7 +257,7 @@ export default function SplitBillModal({
   const [floorTables, setFloorTables] = useState<TableData[]>(tablesProp ?? []);
   const [floorZones, setFloorZones] = useState<ZoneData[]>(zonesProp ?? []);
 
-  const displayTable = tableLabel ?? tableId;
+  const displayTable = humanTableName(tableLabel) ?? tableLabel?.trim() ?? 'Table';
   const rootLabel = displayTable.replace(/\/\d+$/, '');
   const checkLabels = useMemo(
     () => Array.from({ length: splitCount }, (_, i) => `${rootLabel}/${i + 1}`),
@@ -737,6 +741,10 @@ export default function SplitBillModal({
       toast.error(`Split into at least ${MIN_WAYS} checks`);
       return;
     }
+    if (splitCount > MAX_TABLE_SPLITS) {
+      toast.error(`Split into at most ${MAX_TABLE_SPLITS} checks`);
+      return;
+    }
     const qtyMaps: Record<string, number>[] = Array.from({ length: splitCount }, () => ({}));
     if (mode === 'byitem') {
       for (const unit of splitUnits) {
@@ -766,7 +774,8 @@ export default function SplitBillModal({
       onSplitComplete?.(result.tables);
       onClose();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to split table');
+      const raw = err instanceof Error ? err.message : 'Failed to split table';
+      toast.error(tableId ? raw.split(tableId).join(displayTable) : raw);
     } finally {
       setProcessing(false);
     }
@@ -1188,7 +1197,12 @@ export default function SplitBillModal({
               <button
                 key={`split-mode-${id}`}
                 type="button"
-                onClick={() => setMode(id)}
+                onClick={() => {
+                  setMode(id);
+                  if (id === 'equal' || id === 'byitem') {
+                    setSplitCount((count) => Math.min(count, MAX_TABLE_SPLITS));
+                  }
+                }}
                 className={`flex flex-col items-center justify-center gap-1 py-2.5 rounded-xl border text-xs font-medium transition-all duration-150 ${
                   mode === id ? 'bg-primary/15 border-primary/40 text-primary' : 'border-border text-muted-foreground hover:bg-muted/30'
                 }`}
@@ -1204,7 +1218,11 @@ export default function SplitBillModal({
             <p className="text-xs text-muted-foreground font-medium mb-2">
               {mode === 'amount' ? 'Number of ways' : mode === 'byitem' ? 'Number of checks' : 'Number of checks'}
             </p>
-            <SplitCountField value={splitCount} onChange={setSplitCount} />
+            <SplitCountField
+              value={splitCount}
+              max={mode === 'amount' ? MAX_PAY_WAYS : MAX_TABLE_SPLITS}
+              onChange={setSplitCount}
+            />
           </div>
           )}
 
@@ -1265,7 +1283,7 @@ export default function SplitBillModal({
           {mode === 'byitem' && (
             <div className="space-y-2 fade-in">
               <p className="text-[10px] text-muted-foreground">
-                Assign each item to {checkLabels.join(', ')}. Unassigned items stay on {checkLabels[0]}.
+                Assign each item to {checkLabels.join(', ')}. A check can be left empty and still take new items. Unassigned items stay on {checkLabels[0]}.
               </p>
               {splitUnits.map((unit) => (
                 <div key={`assign-${unit.key}`} className="flex items-center justify-between p-3 rounded-xl bg-muted/20 border border-border">

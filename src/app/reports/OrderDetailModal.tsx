@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { analyticsApi, ordersApi, paymentsApi } from '@/lib/api/client';
 import { formatChangeRiel } from '@/lib/receiptMoney';
+import { visibleTableLabel } from '@/lib/tableName';
 import { mergeOrderDetailLayers, normalizeOrderDetailResponse } from '@/lib/api/paymentDetailMapper';
 import type {
   AnalyticsTransactionDetail,
@@ -219,6 +220,7 @@ export default function OrderDetailModal({
     txn?.hasSplit || splitSessions.length > 0 || !!(legacySplitParts && legacySplitParts.length > 0);
   const showTransferHistory = txn?.hasTransfer || transferRecords.length > 0;
   const payments = txn?.payments ?? [];
+  const shownTable = visibleTableLabel(txn?.tableLabel) || visibleTableLabel(tableLabel) || '—';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5">
@@ -232,7 +234,7 @@ export default function OrderDetailModal({
             <div className="min-w-0">
               <h2 className="text-base font-bold text-foreground">Order / Payment Detail</h2>
               <p className="text-sm text-muted-foreground break-words">
-                {txn?.tableLabel ?? tableLabel ?? '—'}
+                {shownTable}
                 {txn?.orderId ? ` · Order ${txn.orderId}` : ''}
               </p>
               <p className="text-xs text-muted-foreground font-mono break-all">
@@ -331,7 +333,7 @@ export default function OrderDetailModal({
                     })}
                   />
                 ) : null}
-                <InfoChip icon={<MapPin size={12} />} label="Table" value={txn.tableLabel || tableLabel || '—'} />
+                <InfoChip icon={<MapPin size={12} />} label="Table" value={shownTable} />
                 {txn.status ? (
                   <InfoChip icon={<Receipt size={12} />} label="Status" value={txn.status} />
                 ) : null}
@@ -464,8 +466,8 @@ export default function OrderDetailModal({
                         ) : null}
                         {p.tenderGroupId ? <DetailRow label="Tender group" value={p.tenderGroupId} mono /> : null}
                         {p.orderId ? <DetailRow label="Order" value={p.orderId} mono /> : null}
-                        {(p.zoneLabel || p.tableId) ? (
-                          <DetailRow label="Place" value={[p.zoneLabel, p.tableId].filter(Boolean).join(' · ')} />
+                        {(p.zoneLabel || shownTable !== '—') ? (
+                          <DetailRow label="Place" value={[p.zoneLabel, shownTable !== '—' ? shownTable : ''].filter(Boolean).join(' · ')} />
                         ) : null}
                       </div>
                     ))}
@@ -597,7 +599,6 @@ export default function OrderDetailModal({
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Record ids</p>
                 {txn.orderId ? <DetailRow label="Order" value={txn.orderId} mono /> : null}
                 <DetailRow label="Payment" value={paymentId} mono />
-                {txn.tableId ? <DetailRow label="Table id" value={txn.tableId} mono /> : null}
                 {txn.tableSessionId ? <DetailRow label="Table session" value={txn.tableSessionId} mono /> : null}
                 {txn.shiftId ? <DetailRow label="Shift" value={txn.shiftId} mono /> : null}
                 {txn.zoneId ? <DetailRow label="Zone id" value={txn.zoneId} mono /> : null}
@@ -622,8 +623,8 @@ export default function OrderDetailModal({
 }
 
 function transferTableLine(t: OrderTransferRecord): string {
-  const from = t.sourceTableLabel ?? t.sourceTableId ?? '?';
-  const to = t.targetTableLabel ?? t.targetTableId ?? '?';
+  const from = visibleTableLabel(t.sourceTableLabel) || '—';
+  const to = visibleTableLabel(t.targetTableLabel) || '—';
   return `${from} → ${to}`;
 }
 
@@ -646,8 +647,8 @@ function TransferRecordRow({ record }: { record: OrderTransferRecord }) {
 }
 
 function mergeTableLine(m: OrderMergeRecord): string {
-  const from = m.sourceTableLabel ?? m.sourceTableId ?? '?';
-  const to = m.targetTableLabel ?? m.targetTableId ?? '?';
+  const from = visibleTableLabel(m.sourceTableLabel) || '—';
+  const to = visibleTableLabel(m.targetTableLabel) || '—';
   return `${from} → ${to}`;
 }
 

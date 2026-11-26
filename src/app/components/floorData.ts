@@ -23,6 +23,7 @@ export interface TableData {
   y: number;
   parentTableId?: string | null;
   splitIndex?: number | null;
+  splitGroupId?: string | null;
 }
 
 export const MIN_TABLE_SCALE = 0.6;

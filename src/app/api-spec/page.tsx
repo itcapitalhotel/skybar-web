@@ -111,7 +111,7 @@ const API_SECTIONS: Section[] = [
       {
         method: 'GET',
         path: '/api/tables',
-        description: 'Get all tables with current status, guests, order totals. Optionally filter by zone.',
+        description: 'Get tables currently on the floor. While a table is split, the parent (T1) is omitted and the children (T1/1, T1/2) are returned. Each table may include parentTableId, splitIndex, and splitGroupId. Optionally filter by zone.',
         response: `[
   {
     "id": "table-v1",
@@ -250,6 +250,30 @@ const API_SECTIONS: Section[] = [
   "orderTotal": 452.79
 }`,
         auth: 'Bearer Token (Bartender+; manager PIN on UI when required)',
+      },
+      {
+        method: 'POST',
+        path: '/api/tables/split',
+        description:
+          'Split one table into real tables: T1 becomes T1/1, T1/2, … (2–10 shares). This is not POST /api/payments/split. The first share stays T1/1. A share may send lines [{ itemId, qty }] or whole lines as itemIds. An empty lines array still creates that table so it can take new items. The API peels quantity itself — do not POST /orders/{tableId}/items first. Kitchen swap tickets are printed by the API. After success, reload GET /api/tables, hide the parent, and select T1/1. When every child is paid, the parent returns and the children are removed.',
+        requestBody: `{
+  "sourceTableId": "uuid-of-T1",
+  "staffId": "staff-uuid",
+  "splits": [
+    { "lines": [{ "itemId": "order-line-id", "qty": 1 }] },
+    { "lines": [{ "itemId": "other-line-id", "qty": 2 }] }
+  ]
+}`,
+        response: `{
+  "parentTableId": "uuid-of-T1",
+  "sourceTableId": "uuid-of-T1",
+  "message": "Split into T1/1, T1/2",
+  "tables": [
+    { "id": "...", "label": "T1/1", "parentTableId": "...", "splitIndex": 1 },
+    { "id": "...", "label": "T1/2", "parentTableId": "...", "splitIndex": 2 }
+  ]
+}`,
+        auth: 'Bearer Token',
       },
       {
         method: 'PATCH',
@@ -811,7 +835,7 @@ const API_SECTIONS: Section[] = [
         method: 'POST',
         path: '/api/payments/split',
         description:
-          'Split bill (Equal / By $ / By item in SplitBillModal). **≥2 splits**. Each split: **guestLabel**, non-empty **itemIds[]** (every non-void order line exactly once), **method**, **amount** (final $; SC/VAT often 0 on split rows). **sum(amount)** within ±0.02 of order **total** from GET /orders/{tableId}. Optional **staffId** / **cashierId**. HTTP 200 closes order, frees table, creates payment_splits + bill_split_events.',
+          'Pay several guests on the same check (By $ in Split Bill). Does not create T1/1, T1/2 — that is POST /api/tables/split. **≥2 splits**. Each split: **guestLabel**, non-empty **itemIds[]** (every non-void order line exactly once), **method**, **amount** (final $; SC/VAT often 0 on split rows). **sum(amount)** within ±0.02 of order **total** from GET /orders/{tableId}. Optional **staffId** / **cashierId**. HTTP 200 closes the order, frees the table, and creates payment_splits + bill_split_events.',
         requestBody: `{
   "tableId": "table-v1",
   "staffId": "u2",

@@ -25,6 +25,7 @@ import type { TableData as ApiTableData, ZoneData, Booking } from '@/lib/api/typ
 import { applyBookingStatus, localDateString } from '@/lib/bookingTableStatus';
 import { getStaffIdForOrder } from '@/lib/staffDisplay';
 import { findZone } from '@/lib/zoneResolve';
+import { displayTableLabel } from '@/lib/tableLabels';
 import { LayoutGrid, Plus, PenLine, Map as MapIcon, Users, Layers, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -71,7 +72,10 @@ function sameTableRecord(a: TableData, b: TableData): boolean {
     && a.shape === b.shape
     && (a.scale ?? 1) === (b.scale ?? 1)
     && a.x === b.x
-    && a.y === b.y;
+    && a.y === b.y
+    && (a.parentTableId ?? '') === (b.parentTableId ?? '')
+    && (a.splitIndex ?? null) === (b.splitIndex ?? null)
+    && (a.splitGroupId ?? '') === (b.splitGroupId ?? '');
 }
 
 /** Keep the previous object when a table did not change, so React can skip that node. */
@@ -88,13 +92,21 @@ function shareTableList(prev: TableData[], next: TableData[]): TableData[] {
   return merged;
 }
 
+function withDisplayLabels(tables: TableData[]): TableData[] {
+  const byId = new Map(tables.map((row) => [row.id, row]));
+  return tables.map((row) => {
+    const label = displayTableLabel(row, byId);
+    return label === row.label ? row : { ...row, label };
+  });
+}
+
 /** Convert API table to local TableData — resolve zone to canonical GET /zones id when possible */
 function apiTableToLocal(t: ApiTableData, zones: ZoneData[] = []): TableData {
   const rawZone = String(t.zone ?? '').trim();
   const matched = findZone(zones, rawZone);
   return {
     id: t.id,
-    label: t.label,
+    label: displayTableLabel(t),
     zone: matched?.id ?? rawZone,
     status: t.status as TableData['status'],
     guests: t.guestCount ?? t.guests ?? 0,
@@ -111,6 +123,7 @@ function apiTableToLocal(t: ApiTableData, zones: ZoneData[] = []): TableData {
     y: t.y,
     parentTableId: t.parentTableId,
     splitIndex: t.splitIndex,
+    splitGroupId: t.splitGroupId,
   };
 }
 
@@ -191,19 +204,21 @@ export default function FloorMapClient() {
 
   // ── Fetch tables from API ──────────────────────────────────────────────────
   /** `silent` skips the loading spinner (used by the background poll). */
-  const fetchTables = useCallback(async (opts?: { silent?: boolean }) => {
+  const fetchTables = useCallback(async (opts?: { silent?: boolean }): Promise<TableData[] | null> => {
     const silent = opts?.silent === true;
     const reqId = ++tablesReqRef.current;
     if (!silent) setLoading(true);
     try {
       const apiTables = await tablesApi.list();
-      if (reqId !== tablesReqRef.current) return;
-      const local = apiTables.map((t) => apiTableToLocal(t, zoneCatalogRef.current));
+      if (reqId !== tablesReqRef.current) return null;
+      const local = withDisplayLabels(apiTables.map((t) => apiTableToLocal(t, zoneCatalogRef.current)));
       const apply = (prev: TableData[]) => shareTableList(prev, local);
       if (silent) React.startTransition(() => setTables(apply));
       else setTables(apply);
+      return local;
     } catch {
       if (!silent && reqId === tablesReqRef.current) setTables([]);
+      return null;
     } finally {
       if (!silent) setLoading(false);
     }
@@ -894,22 +909,76 @@ export default function FloorMapClient() {
     setSelectedTable(table);
   };
 
+  const forgetTables = (ids: string[]) => {
+    if (ids.length === 0) return;
+    const gone = new Set(ids);
+    const drop = <T,>(prev: Record<string, T>): Record<string, T> => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of gone) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    };
+    setTableOrders(drop);
+    setTableOrderTotals(drop);
+    setTableOrderIds(drop);
+    setTableOrderNotes(drop);
+  };
+
+  const keepLiveTables = (live: Set<string>) => {
+    const dropMissing = <T,>(prev: Record<string, T>): Record<string, T> => {
+      let changed = false;
+      const next: Record<string, T> = {};
+      for (const [id, value] of Object.entries(prev)) {
+        if (live.has(id)) next[id] = value;
+        else changed = true;
+      }
+      return changed ? next : prev;
+    };
+    setTableOrders(dropMissing);
+    setTableOrderTotals(dropMissing);
+    setTableOrderIds(dropMissing);
+    setTableOrderNotes(dropMissing);
+  };
+
   const handleSplitComplete = async (created?: ApiTableData[]) => {
     const sourceId = selectedTable?.id;
-    await fetchTables();
-    const firstId = created?.[0]?.id;
-    if (firstId) {
-      try {
-        const apiTables = await tablesApi.list();
-        const local = apiTables.map((t) => apiTableToLocal(t, zoneCatalog));
-        const first = local.find((t) => t.id === firstId);
-        if (first) setSelectedTable(first);
-        await fetchOrderForTable(firstId);
-      } catch {
-        /* floor refresh below still runs */
+    const mapped = withDisplayLabels((created ?? []).map((t) => apiTableToLocal(t, zoneCatalogRef.current)));
+    const returnedIds = new Set(mapped.map((t) => t.id));
+    const parentId = mapped.find((t) => t.parentTableId)?.parentTableId ?? null;
+    const hide = new Set<string>();
+    if (parentId && !returnedIds.has(parentId)) hide.add(parentId);
+    if (sourceId && !returnedIds.has(sourceId)) hide.add(sourceId);
+    const opened = mapped.find((t) => t.splitIndex === 1) ?? mapped[0];
+
+    if (mapped.length > 0) {
+      setTables((prev) => [
+        ...prev.filter((t) => !hide.has(t.id) && !returnedIds.has(t.id)),
+        ...mapped,
+      ]);
+      forgetTables([...hide]);
+      if (opened) {
+        setSelectedTable(opened);
+        void fetchOrderForTable(opened.id);
       }
-    } else if (sourceId) {
-      await fetchOrderForTable(sourceId);
+    }
+
+    const listed = await fetchTables();
+    if (!listed) return;
+    if (opened) {
+      const fresh = listed.find((t) => t.id === opened.id);
+      setSelectedTable(fresh ?? null);
+      if (fresh) void fetchOrderForTable(fresh.id);
+      return;
+    }
+    if (sourceId && listed.some((t) => t.id === sourceId)) {
+      void fetchOrderForTable(sourceId);
+    } else {
+      setSelectedTable(null);
     }
   };
 
@@ -917,7 +986,7 @@ export default function FloorMapClient() {
     const sourceId = selectedTable?.id;
     try {
       const apiTables = await tablesApi.list();
-      const local = apiTables.map((t) => apiTableToLocal(t, zoneCatalog));
+      const local = withDisplayLabels(apiTables.map((t) => apiTableToLocal(t, zoneCatalog)));
       setTables(local);
       const target = local.find(t => t.id === targetTableId);
       if (target) setSelectedTable(target);
@@ -941,15 +1010,12 @@ export default function FloorMapClient() {
     const paidId = selectedTable?.id;
     setPaymentOpen(false);
     setSelectedTable(null);
-    if (paidId) {
-      setTableOrders(prev => ({ ...prev, [paidId]: [] }));
-      setTableOrderIds(prev => {
-        const next = { ...prev };
-        delete next[paidId];
-        return next;
-      });
+    const listed = await fetchTables();
+    if (listed && listed.length > 0) {
+      keepLiveTables(new Set(listed.map((t) => t.id)));
+      return;
     }
-    await fetchTables();
+    if (paidId) forgetTables([paidId]);
   };
 
   const handleTableAdded = () => {
@@ -1231,6 +1297,7 @@ export default function FloorMapClient() {
             serviceCharge={currentBill.serviceCharge}
             vat={currentBill.vat}
             tableId={selectedTable.id}
+            tableLabel={selectedTable.label}
             guestCount={Math.max(1, selectedTable.guests ?? 1)}
             orderLineItems={currentItems
               .filter((i) => i.status !== 'Voided')
