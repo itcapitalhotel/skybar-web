@@ -15,7 +15,7 @@ export default function BilingualItemName({
   name,
   khmerName,
   nameClassName,
-  khmerClassName = 'block text-[11px] text-muted-foreground leading-snug',
+  khmerClassName = 'block leading-snug text-primary',
 }: BilingualItemNameProps) {
   const showKhmer = hasKhmerName(name, khmerName);
   return (

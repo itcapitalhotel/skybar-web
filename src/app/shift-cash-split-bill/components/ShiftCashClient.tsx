@@ -223,7 +223,7 @@ export default function ShiftCashClient() {
                         <span className="text-foreground">
                           {item.qty}× {item.name}
                           {item.khmerName?.trim() ? (
-                            <span className="block text-[11px] text-muted-foreground">{item.khmerName}</span>
+                            <span className="block text-primary">{item.khmerName}</span>
                           ) : null}
                         </span>
                         <span className="text-muted-foreground text-tabular">${(item.unitPrice * item.qty).toFixed(2)}</span>

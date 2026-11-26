@@ -1,5 +1,5 @@
 import { clearAuthToken, getApiBaseUrl, getAuthToken } from './config';
-import { compareMenuItemId, mapMenuItems, normalizeZone, normalizeZoneList } from './mappers';
+import { compareMenuItemId, khmerNameOf, mapMenuItems, normalizeZone, normalizeZoneList } from './mappers';
 import { normalizeCategoryType } from '@/lib/menuCategory';
 import { normalizeOrderDetailResponse } from './paymentDetailMapper';
 import type {
@@ -525,10 +525,14 @@ export const menuCategoryApi = {
   },
 };
 
+function withKhmerName<T extends ApiMenuItem>(item: T): T {
+  return { ...item, khmerName: khmerNameOf(item) ?? null };
+}
+
 export const menuApi = {
   list: async (categoryId?: string) => {
     const items = await get<ApiMenuItem[]>('/menu', categoryId ? { categoryId } : undefined);
-    return [...items].sort((a, b) => compareMenuItemId(a.id, b.id));
+    return [...items].map(withKhmerName).sort((a, b) => compareMenuItemId(a.id, b.id));
   },
   categories: () => menuCategoryApi.list(),
   items: async (categoryId?: string): Promise<MenuItem[]> => {
@@ -539,8 +543,8 @@ export const menuApi = {
       (i) => i.categoryId === categoryId || i.category === categoryId,
     );
   },
-  create: (data: Partial<ApiMenuItem>) => post<ApiMenuItem>('/menu', data),
-  update: (id: string, data: Partial<ApiMenuItem>) => put<ApiMenuItem>(`/menu/${id}`, data),
+  create: async (data: Partial<ApiMenuItem>) => withKhmerName(await post<ApiMenuItem>('/menu', data)),
+  update: async (id: string, data: Partial<ApiMenuItem>) => withKhmerName(await put<ApiMenuItem>(`/menu/${id}`, data)),
   delete: (id: string) => del<{ message: string }>(`/menu/${id}`),
   setAvailability: (id: string, available: boolean) =>
     patch<{ id: string; available: boolean }>(`/menu/${id}/availability`, { available }),

@@ -559,7 +559,7 @@ export default function OrderDetailModal({
                             <td className="px-3 py-2 align-top break-words">
                               <p className="font-medium text-foreground">{it.name}</p>
                               {it.khmerName?.trim() ? (
-                                <p className="text-xs text-muted-foreground">{it.khmerName}</p>
+                                <p className="font-medium text-primary">{it.khmerName}</p>
                               ) : null}
                               {it.categoryType ? (
                                 <p className="text-xs text-muted-foreground capitalize">{it.categoryType}</p>

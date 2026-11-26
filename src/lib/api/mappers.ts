@@ -14,13 +14,22 @@ export function compareMenuItemId(
   return aText.localeCompare(bText, undefined, { numeric: true, sensitivity: 'base' });
 }
 
+export function khmerNameOf(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const row = raw as Record<string, unknown>;
+  const value = row.khmerName ?? row.khmer_name;
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  return text || undefined;
+}
+
 export function mapMenuItem(item: ApiMenuItem): MenuItem {
   const defaultPrice = item.sizes?.[0]?.price ?? 0;
   const slug = item.category ?? item.categoryId;
   return {
     id: item.id,
     name: item.name,
-    khmerName: item.khmerName?.trim() || undefined,
+    khmerName: khmerNameOf(item),
     price: defaultPrice,
     categoryId: item.categoryId,
     category: slug,

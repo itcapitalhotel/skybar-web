@@ -117,7 +117,7 @@ function OrderToastCard({
               <span className="text-xs text-foreground">
                 {item.name}
                 {item.khmerName?.trim() ? (
-                  <span className="block text-[10px] text-muted-foreground">{item.khmerName}</span>
+                  <span className="block text-primary">{item.khmerName}</span>
                 ) : null}
               </span>
               <span className="ml-auto text-xs font-semibold text-emerald-400">×{item.qty}</span>

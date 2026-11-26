@@ -101,7 +101,7 @@ export default function ReceiptPreview({
                       <span className="text-gray-900 font-medium break-words min-w-0 flex-1">
                         {item.name}
                         {item.khmerName?.trim() && item.khmerName.trim() !== item.name ? (
-                          <span className="block text-[11px] text-gray-500">{item.khmerName}</span>
+                          <span className="block">{item.khmerName}</span>
                         ) : null}
                       </span>
                       <span className="tabular-nums text-gray-900 shrink-0">{formatMoney(total, currencySymbol)}</span>

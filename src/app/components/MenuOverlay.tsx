@@ -1,8 +1,6 @@
 'use client';
 
-import React, {
-  useMemo, useState, useEffect, useRef, useLayoutEffect, useCallback,
-} from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   X, Plus, Minus, ShoppingCart, Star, Search, Trash2, ChevronRight,
 } from 'lucide-react';
@@ -40,10 +38,6 @@ function lineSizeLabel(item: MenuItem, sizeIndex: number): string | undefined {
   return item.sizes?.[sizeIndex]?.label;
 }
 
-const CART_VISIBLE_MAX = 4;
-/** Matches Tailwind `space-y-2` between cart lines */
-const CART_LINE_GAP_PX = 8;
-
 function menuItemPriceLabel(item: MenuItem): string {
   const sizes = item.sizes?.filter((s) => s.price != null && s.label);
   if (sizes?.length) {
@@ -57,34 +51,6 @@ function menuItemPriceLabel(item: MenuItem): string {
 }
 
 const cartLineCardClass = 'rounded-xl border border-border bg-background/80 p-2.5 space-y-2';
-
-/** Hidden row — same layout as a real line so we always reserve 4-row height. */
-function CartLineHeightProbe({ measureRef }: { measureRef: React.RefObject<HTMLDivElement | null> }) {
-  return (
-    <div
-      ref={measureRef}
-      className={`${cartLineCardClass} absolute left-3 right-3 top-2 opacity-0 pointer-events-none`}
-      aria-hidden
-    >
-      <div className="flex items-start gap-2">
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold text-foreground leading-snug">Sample menu item</p>
-          <p className="text-[10px] font-medium text-primary mt-0.5">Regular</p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">$0.00 each</p>
-        </div>
-        <div className="w-7 h-7" />
-      </div>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/30 p-0.5">
-          <div className="w-7 h-7" />
-          <span className="w-8 text-center text-sm font-semibold">1</span>
-          <div className="w-7 h-7" />
-        </div>
-        <span className="text-sm font-semibold tabular-nums">$0.00</span>
-      </div>
-    </div>
-  );
-}
 
 export default function MenuOverlay({
   table,
@@ -102,32 +68,6 @@ export default function MenuOverlay({
   const [submitting, setSubmitting] = useState(false);
   const [sendNote, setSendNote] = useState(tableNote);
   const [sizePickerItem, setSizePickerItem] = useState<MenuItem | null>(null);
-  const cartLineMeasureRef = useRef<HTMLDivElement | null>(null);
-  const [cartListViewportHeight, setCartListViewportHeight] = useState<number | undefined>();
-
-  const recomputeCartListHeight = useCallback(() => {
-    const el = cartLineMeasureRef.current;
-    if (!el) return;
-    const rowH = el.getBoundingClientRect().height;
-    const gapCount = CART_VISIBLE_MAX - 1;
-    setCartListViewportHeight(rowH * CART_VISIBLE_MAX + gapCount * CART_LINE_GAP_PX);
-  }, []);
-
-  useLayoutEffect(() => {
-    recomputeCartListHeight();
-  }, [recomputeCartListHeight, loadingMenu]);
-
-  useEffect(() => {
-    const el = cartLineMeasureRef.current;
-    if (!el) return undefined;
-    const observer = new ResizeObserver(() => recomputeCartListHeight());
-    observer.observe(el);
-    window.addEventListener('resize', recomputeCartListHeight);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', recomputeCartListHeight);
-    };
-  }, [recomputeCartListHeight, loadingMenu]);
 
   useEffect(() => {
     let cancelled = false;
@@ -403,7 +343,7 @@ export default function MenuOverlay({
 
             {/* Cart */}
             <div className="w-full sm:w-[min(100%,22rem)] flex flex-col flex-shrink-0 border-t sm:border-t-0 sm:border-l border-border bg-muted/10">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-border/80">
+              <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-border/80">
                 <div className="flex items-center gap-2">
                   <ShoppingCart size={16} className="text-primary" />
                   <span className="text-sm font-semibold text-foreground">Your selection</span>
@@ -420,23 +360,7 @@ export default function MenuOverlay({
                 ) : null}
               </div>
 
-              <div
-                className={`relative px-3 py-2 overscroll-contain ${
-                  cart.length > CART_VISIBLE_MAX ? 'overflow-y-auto scrollbar-thin' : 'overflow-hidden'
-                } ${
-                  cartListViewportHeight == null ? 'min-h-[calc(5.75rem*4+0.5rem*3)]' : ''
-                }`}
-                style={
-                  cartListViewportHeight != null
-                    ? {
-                        height: cartListViewportHeight,
-                        minHeight: cartListViewportHeight,
-                        maxHeight: cartListViewportHeight,
-                      }
-                    : undefined
-                }
-              >
-                <CartLineHeightProbe measureRef={cartLineMeasureRef} />
+              <div className="h-[min(38rem,64vh)] overflow-y-auto scrollbar-thin px-3 py-2 overscroll-contain">
                 {cart.length === 0 ? (
                   <div className="flex h-full min-h-[inherit] items-center justify-center text-center px-2">
                     <div>
@@ -517,7 +441,7 @@ export default function MenuOverlay({
                 )}
               </div>
 
-              <div className="p-4 border-t border-border space-y-2 bg-background/50">
+              <div className="shrink-0 px-4 pt-3 pb-3 border-t border-border space-y-2 bg-background/50">
                 <label className="block">
                   <span className="text-[10px] font-medium text-muted-foreground">Note for these items</span>
                   <textarea
@@ -565,7 +489,9 @@ export default function MenuOverlay({
                 <p id="size-picker-title" className="text-sm font-semibold text-foreground">
                   Choose size
                 </p>
-                <p className="text-xs text-muted-foreground mt-0.5">{sizePickerItem.name}</p>
+                <p className="text-xs text-muted-foreground mt-0.5 break-words">
+                  <BilingualItemName name={sizePickerItem.name} khmerName={sizePickerItem.khmerName} />
+                </p>
               </div>
               <button
                 type="button"

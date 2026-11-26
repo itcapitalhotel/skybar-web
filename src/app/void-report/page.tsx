@@ -231,7 +231,7 @@ export default function VoidReportPage() {
                     <td className="py-2.5 px-3 text-foreground">
                       {row.name || '—'}
                       {row.khmerName?.trim() ? (
-                        <span className="block text-[11px] text-muted-foreground">{row.khmerName}</span>
+                        <span className="block text-primary">{row.khmerName}</span>
                       ) : null}
                       {row.size ? <span className="text-muted-foreground"> · {row.size}</span> : null}
                     </td>

@@ -264,7 +264,7 @@ export default function MergeTablesModal({ isOpen, onClose, tables, tableOrders,
                           <span className="text-foreground truncate">
                             {item.qty}× {item.name}
                             {item.khmerName?.trim() ? (
-                              <span className="block text-[11px] text-muted-foreground truncate">{item.khmerName}</span>
+                              <span className="block truncate text-primary">{item.khmerName}</span>
                             ) : null}
                           </span>
                         </div>

@@ -434,12 +434,16 @@ export default function PostItemsPage() {
               >
                 <div className="flex flex-col md:flex-row md:items-start gap-3 md:gap-4">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span className="text-xs font-semibold tabular-nums text-muted-foreground">{item.id}</span>
-                      <h3 className="font-semibold text-sm md:text-base text-foreground">{item.name}</h3>
+                    <div className="mb-1">
+                      <div className="flex items-baseline gap-2 min-w-0">
+                        <span className="text-xs font-semibold tabular-nums text-muted-foreground">{item.id}</span>
+                        <h3 className="font-semibold text-sm md:text-base text-foreground break-words">{item.name}</h3>
+                      </div>
                       {item.khmerName?.trim() ? (
-                        <span className="text-sm text-muted-foreground">{item.khmerName}</span>
+                        <p className="font-semibold text-sm md:text-base text-primary leading-snug break-words">{item.khmerName}</p>
                       ) : null}
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
                       <span
                         className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border"
                         style={{ background: 'rgba(100,116,139,0.12)', borderColor: 'rgba(100,116,139,0.25)', color: '#94a3b8' }}
@@ -531,8 +535,8 @@ export default function PostItemsPage() {
       {drawerOpen && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="modal-overlay absolute inset-0" onClick={() => setDrawerOpen(false)} />
-          <div className="relative w-full max-w-lg glass-card-elevated border-l border-border h-full overflow-y-auto slide-up">
-            <div className="p-5 md:p-6">
+          <div className="relative w-full max-w-lg glass-card-elevated border-l border-border h-full flex flex-col overflow-hidden slide-up">
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 md:p-6">
               <div className="flex items-center justify-between mb-6">
                 <div>
                   <h3 className="text-base font-semibold text-foreground">
@@ -732,31 +736,31 @@ export default function PostItemsPage() {
                   </label>
                 </div>
 
-                <div className="pt-3 flex gap-3 border-t border-border">
-                  <button
-                    type="button"
-                    onClick={() => setDrawerOpen(false)}
-                    className="flex-1 btn-ghost rounded-xl py-2.5 text-sm font-medium"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleSave()}
-                    disabled={saving}
-                    className="flex-1 btn-primary rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
-                  >
-                    {saving ? (
-                      <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                    ) : (
-                      <>
-                        <CheckCircle2 size={15} />
-                        {editingItem ? 'Save Changes' : 'Post Item'}
-                      </>
-                    )}
-                  </button>
-                </div>
               </div>
+            </div>
+            <div className="shrink-0 px-5 md:px-6 py-4 flex gap-3 border-t border-border bg-background/95">
+              <button
+                type="button"
+                onClick={() => setDrawerOpen(false)}
+                className="flex-1 btn-ghost rounded-xl py-2.5 text-sm font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSave()}
+                disabled={saving}
+                className="flex-1 btn-primary rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {saving ? (
+                  <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <CheckCircle2 size={15} />
+                    {editingItem ? 'Save Changes' : 'Post Item'}
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
