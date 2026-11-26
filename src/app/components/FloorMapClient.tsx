@@ -109,6 +109,8 @@ function apiTableToLocal(t: ApiTableData, zones: ZoneData[] = []): TableData {
     scale: t.scale,
     x: t.x,
     y: t.y,
+    parentTableId: t.parentTableId,
+    splitIndex: t.splitIndex,
   };
 }
 
@@ -892,12 +894,23 @@ export default function FloorMapClient() {
     setSelectedTable(table);
   };
 
-  const handleSplitComplete = async () => {
-    if (!selectedTable) return;
-    await Promise.all([
-      fetchOrderForTable(selectedTable.id),
-      fetchTables(),
-    ]);
+  const handleSplitComplete = async (created?: ApiTableData[]) => {
+    const sourceId = selectedTable?.id;
+    await fetchTables();
+    const firstId = created?.[0]?.id;
+    if (firstId) {
+      try {
+        const apiTables = await tablesApi.list();
+        const local = apiTables.map((t) => apiTableToLocal(t, zoneCatalog));
+        const first = local.find((t) => t.id === firstId);
+        if (first) setSelectedTable(first);
+        await fetchOrderForTable(firstId);
+      } catch {
+        /* floor refresh below still runs */
+      }
+    } else if (sourceId) {
+      await fetchOrderForTable(sourceId);
+    }
   };
 
   const handleTableTransferred = async (targetTableId: string) => {
@@ -925,25 +938,18 @@ export default function FloorMapClient() {
   const totalCovers = displayTables.filter(t => t.status === 'occupied').reduce((a, t) => a + t.guests, 0);
 
   const handlePaymentComplete = async () => {
+    const paidId = selectedTable?.id;
     setPaymentOpen(false);
-    if (!selectedTable) return;
-    try {
-      await ordersApi.clear(selectedTable.id);
-    } catch { /* optimistic */ }
-    setTables(prev => prev.map(t => {
-      if (t.id === selectedTable.id) {
-        void updateTableStatus(selectedTable.id, 'available', 0);
-        return { ...t, status: 'available', guests: 0, seatedMinutes: 0, orderTotal: 0 };
-      }
-      return t;
-    }));
-    setTableOrders(prev => ({ ...prev, [selectedTable.id]: [] }));
-    setTableOrderIds(prev => {
-      const next = { ...prev };
-      delete next[selectedTable.id];
-      return next;
-    });
     setSelectedTable(null);
+    if (paidId) {
+      setTableOrders(prev => ({ ...prev, [paidId]: [] }));
+      setTableOrderIds(prev => {
+        const next = { ...prev };
+        delete next[paidId];
+        return next;
+      });
+    }
+    await fetchTables();
   };
 
   const handleTableAdded = () => {
@@ -1257,7 +1263,7 @@ export default function FloorMapClient() {
             guestCount={Math.max(1, selectedTable.guests ?? 1)}
             tables={tables}
             zones={zoneCatalog}
-            onSplitComplete={() => void handleSplitComplete()}
+            onSplitComplete={(created) => void handleSplitComplete(created)}
             onItemsMoved={(targetId) => {
               void (async () => {
                 await Promise.all([

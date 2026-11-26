@@ -170,6 +170,9 @@ export interface TableData {
   scale?: number;
   x: number;
   y: number;
+  parentTableId?: string | null;
+  splitIndex?: number | null;
+  splitGroupId?: string | null;
 }
 
 export interface CreateTableRequest {
@@ -215,6 +218,29 @@ export interface TransferTableResponse {
   orderTotal?: number;
   sourceTable?: TableData;
   targetTable?: TableData;
+}
+
+export interface SplitTableLine {
+  itemId: string;
+  qty: number;
+}
+
+export interface SplitTableShare {
+  itemIds?: string[];
+  lines?: SplitTableLine[];
+}
+
+export interface SplitTableRequest {
+  sourceTableId: string;
+  staffId?: string;
+  splits: SplitTableShare[];
+}
+
+export interface SplitTableResponse {
+  parentTableId: string;
+  sourceTableId: string;
+  tables: TableData[];
+  message: string;
 }
 
 // ── Bookings ──────────────────────────────────────────────────────────────────
@@ -658,6 +684,7 @@ export interface ProcessPaymentResponse {
 /** GET /api/receipts/{paymentId} — payment fields plus line items for preview. */
 export interface ReceiptResponse extends ProcessPaymentResponse {
   items?: OrderItem[];
+  tenders?: PaymentTender[] | null;
 }
 
 /**

@@ -6,6 +6,7 @@ import { TableData, OrderItem, calcOrderTotal } from './floorData';
 import type { UserRole } from '@/lib/api/types';
 import { receiptsApi } from '@/lib/api/client';
 import { getAuthUser } from '@/lib/api/config';
+import { isUserRole } from '@/lib/navRoles';
 import { applyVenueRates, loadVenueRates, DEFAULT_VENUE_RATES } from '@/lib/venueRates';
 import { toast } from 'sonner';
 import BilingualItemName from '@/components/BilingualItemName';
@@ -99,6 +100,10 @@ export default function OrderPanel({
 
   const canSplit = role === 'Admin' || role === 'Manager' || role === 'Supervisor' || role === 'Service' || role === 'Cashier';
   const canPay = role === 'Admin' || role === 'Manager' || role === 'Supervisor' || role === 'Service' || role === 'Cashier';
+  const signedInRole = (): UserRole => {
+    const stored = getAuthUser()?.role;
+    return isUserRole(stored) ? stored : role;
+  };
 
   const closeVoidModal = () => {
     if (voiding) return;
@@ -224,7 +229,7 @@ export default function OrderPanel({
                   toast.error('No open check on this table');
                   return;
                 }
-                if (role === 'Bartender') {
+                if (signedInRole() === 'Bartender') {
                   onRequestManagerPin('Change Table', onOpenTransfer);
                 } else {
                   onOpenTransfer();

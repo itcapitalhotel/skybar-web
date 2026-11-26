@@ -21,6 +21,8 @@ export interface TableData {
   scale?: number;
   x: number;
   y: number;
+  parentTableId?: string | null;
+  splitIndex?: number | null;
 }
 
 export const MIN_TABLE_SCALE = 0.6;

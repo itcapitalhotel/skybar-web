@@ -5,10 +5,9 @@ import { X, Users, SplitSquareHorizontal, Check, Minus, Plus, Printer, ArrowLeft
 import { toast } from 'sonner';
 import { ordersApi, paymentsApi, receiptsApi, tablesApi, zonesApi } from '@/lib/api/client';
 import { getAuthUser } from '@/lib/api/config';
-import type { PaymentMethod, PaymentTender, PrintSplitReceiptLine, SplitPaymentLine, ZoneData } from '@/lib/api/types';
+import type { PaymentMethod, PaymentTender, PrintSplitReceiptLine, SplitPaymentLine, SplitTableShare, TableData, ZoneData } from '@/lib/api/types';
 import { findZone } from '@/lib/zoneResolve';
 import { formatChangeRiel } from '@/lib/receiptMoney';
-import type { TableData } from '@/lib/api/types';
 import {
   explodeItemsToUnits,
   isValidItemPartition,
@@ -38,7 +37,7 @@ interface SplitBillModalProps {
   /** Display label (e.g. V3) */
   tableLabel?: string;
   guestCount?: number;
-  onSplitComplete?: () => void;
+  onSplitComplete?: (tables?: TableData[]) => void;
   /** After unpaid split bill checks print (table → bill) — refresh floor, keep modal open */
   onBillCheckPrinted?: () => void;
   /** Floor tables for “To table” item move */
@@ -255,6 +254,11 @@ export default function SplitBillModal({
   const [floorZones, setFloorZones] = useState<ZoneData[]>(zonesProp ?? []);
 
   const displayTable = tableLabel ?? tableId;
+  const rootLabel = displayTable.replace(/\/\d+$/, '');
+  const checkLabels = useMemo(
+    () => Array.from({ length: splitCount }, (_, i) => `${rootLabel}/${i + 1}`),
+    [rootLabel, splitCount],
+  );
 
   const splitUnits = useMemo(
     () => explodeItemsToUnits(items.map((it) => ({
@@ -723,6 +727,51 @@ export default function SplitBillModal({
     setMoveItemIds((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
   };
 
+  const handleSplitTable = async () => {
+    const staffId = getAuthUser()?.id;
+    if (!staffId) {
+      toast.error('Sign in again to split this table');
+      return;
+    }
+    if (splitCount < MIN_WAYS) {
+      toast.error(`Split into at least ${MIN_WAYS} checks`);
+      return;
+    }
+    const qtyMaps: Record<string, number>[] = Array.from({ length: splitCount }, () => ({}));
+    if (mode === 'byitem') {
+      for (const unit of splitUnits) {
+        const guest = assignments[unit.key] ?? 1;
+        const idx = Math.min(splitCount, Math.max(1, guest)) - 1;
+        qtyMaps[idx][unit.sourceId] = (qtyMaps[idx][unit.sourceId] ?? 0) + 1;
+      }
+    } else {
+      const guestOf = assignUnitsToGuests(splitUnits, splitCount, null);
+      for (const unit of splitUnits) {
+        const guest = guestOf.get(unit.key) ?? 1;
+        const idx = Math.min(splitCount, Math.max(1, guest)) - 1;
+        qtyMaps[idx][unit.sourceId] = (qtyMaps[idx][unit.sourceId] ?? 0) + 1;
+      }
+    }
+    const splits: SplitTableShare[] = qtyMaps.map((qty) => ({
+      lines: Object.entries(qty).map(([itemId, q]) => ({ itemId, qty: q })),
+    }));
+    setProcessing(true);
+    try {
+      const result = await tablesApi.split({
+        sourceTableId: tableId,
+        staffId,
+        splits,
+      });
+      toast.success(result.message || `Split into ${checkLabels.join(', ')}`);
+      onSplitComplete?.(result.tables);
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to split table');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const handleMoveItems = async () => {
     const itemIds = items.filter((it) => moveItemIds[it.id]).map((it) => it.id);
     if (itemIds.length === 0) {
@@ -1119,6 +1168,7 @@ export default function SplitBillModal({
               <h3 className="text-base font-semibold text-foreground">Split Bill</h3>
               <p className="text-xs text-muted-foreground">
                 Table {displayTable} · ${total.toFixed(2)} total
+                {mode !== 'totable' && mode !== 'amount' ? ` → ${checkLabels.join(', ')}` : ''}
               </p>
             </div>
           </div>
@@ -1152,7 +1202,7 @@ export default function SplitBillModal({
           {mode !== 'totable' && (
           <div>
             <p className="text-xs text-muted-foreground font-medium mb-2">
-              {mode === 'byitem' ? 'Number of guests' : 'Number of ways'}
+              {mode === 'amount' ? 'Number of ways' : mode === 'byitem' ? 'Number of checks' : 'Number of checks'}
             </p>
             <SplitCountField value={splitCount} onChange={setSplitCount} />
           </div>
@@ -1160,16 +1210,17 @@ export default function SplitBillModal({
 
           {mode === 'equal' && (
             <div className="rounded-xl bg-muted/30 border border-border p-4 space-y-2 fade-in">
-              <p className="text-xs text-muted-foreground">Each guest check total (incl. tax &amp; service)</p>
-              {equalShares(total, splitCount).map((amt, i) => (
+              <p className="text-xs text-muted-foreground">
+                Creates separate tables {checkLabels.join(', ')}. Items are divided evenly. You can add more items or pay each check on its own.
+              </p>
+              {checkLabels.map((label, i) => (
                 <div key={`equal-share-${i}`} className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Guest {i + 1}</span>
-                  <span className="text-primary font-bold text-tabular">${amt.toFixed(2)}</span>
+                  <span className="text-muted-foreground">{label}</span>
+                  <span className="text-primary font-bold text-tabular">
+                    ${equalShares(total, splitCount)[i]?.toFixed(2)}
+                  </span>
                 </div>
               ))}
-              <p className="text-[10px] text-muted-foreground">
-                These amounts are printed on the bill checks. Up to {splitUnits.length} ways on this check.
-              </p>
             </div>
           )}
 
@@ -1214,7 +1265,7 @@ export default function SplitBillModal({
           {mode === 'byitem' && (
             <div className="space-y-2 fade-in">
               <p className="text-[10px] text-muted-foreground">
-                Multi-qty lines are broken into 1× units so you can assign each one to a different guest.
+                Assign each item to {checkLabels.join(', ')}. Unassigned items stay on {checkLabels[0]}.
               </p>
               {splitUnits.map((unit) => (
                 <div key={`assign-${unit.key}`} className="flex items-center justify-between p-3 rounded-xl bg-muted/20 border border-border">
@@ -1226,18 +1277,18 @@ export default function SplitBillModal({
                     <p className="text-xs text-muted-foreground text-tabular">${unit.price.toFixed(2)}</p>
                   </div>
                   <div className="flex gap-1.5 flex-wrap justify-end max-w-[50%]">
-                    {Array.from({ length: splitCount }).map((_, gi) => (
+                    {checkLabels.map((label, gi) => (
                       <button
                         key={`assign-${unit.key}-g${gi}`}
                         type="button"
                         onClick={() => assignUnit(unit.key, gi + 1)}
-                        className={`min-w-8 h-8 px-1 rounded-lg border text-xs font-semibold transition-all duration-100 ${
+                        className={`min-w-8 h-8 px-1 rounded-lg border text-[10px] font-semibold transition-all duration-100 ${
                           assignments[unit.key] === gi + 1
                             ? 'bg-primary/20 border-primary/50 text-primary'
                             : 'border-border text-muted-foreground hover:bg-muted/40'
                         }`}
                       >
-                        {gi + 1}
+                        {label}
                       </button>
                     ))}
                   </div>
@@ -1320,17 +1371,6 @@ export default function SplitBillModal({
             </div>
           )}
 
-          {(mode === 'equal' || mode === 'byitem') && (
-            <div className="space-y-3">
-              <p className="text-xs text-muted-foreground font-medium">Payment method per guest</p>
-              {Array.from({ length: splitCount }).map((_, i) => (
-                <div key={`guest-method-${i}`} className="rounded-xl border border-border bg-muted/10 p-3 space-y-2">
-                  <span className="text-xs text-muted-foreground">Guest {i + 1}</span>
-                  {renderGuestPay(i, dueForGuest(i))}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
         <div className="p-5 border-t border-border space-y-2">
@@ -1349,7 +1389,7 @@ export default function SplitBillModal({
                 Selected items go to the other table. Remaining items stay on this check.
               </p>
             </>
-          ) : (
+          ) : mode === 'amount' ? (
             <>
           <button
             type="button"
@@ -1372,6 +1412,21 @@ export default function SplitBillModal({
           <p className="text-[10px] text-muted-foreground text-center leading-relaxed">
             Print unpaid checks for guests first, then collect payment when ready.
           </p>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => void handleSplitTable()}
+                disabled={processing}
+                className="w-full btn-primary rounded-xl py-3 font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <SplitSquareHorizontal size={16} />
+                {processing ? 'Splitting…' : `Split into ${checkLabels.join(' · ')}`}
+              </button>
+              <p className="text-[10px] text-muted-foreground text-center leading-relaxed">
+                Each check is its own table. Add items or pay {checkLabels.join(' and ')} separately.
+              </p>
             </>
           )}
         </div>

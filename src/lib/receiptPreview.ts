@@ -31,7 +31,20 @@ export interface ReceiptPreviewData {
   cashTendered?: number | null;
   change?: number;
   roomNumber?: string | null;
+  cardName?: string | null;
+  cardNumber?: string | null;
   staffName?: string;
+  tenders?: ReceiptTenderPreview[];
+}
+
+export interface ReceiptTenderPreview {
+  method: PaymentMethod;
+  amount: number;
+  cashTendered?: number | null;
+  change?: number;
+  cardName?: string | null;
+  cardNumber?: string | null;
+  roomNumber?: string | null;
 }
 
 export type ReceiptPaperWidth = '58mm' | '80mm';
@@ -89,8 +102,27 @@ export function mapReceiptApiToPreview(raw: Record<string, unknown>): ReceiptPre
     cashTendered: num(raw.cashTendered ?? raw.cash_tendered) ?? null,
     change: num(raw.change ?? raw.changeAmount ?? raw.change_amount) ?? 0,
     roomNumber: raw.roomNumber != null ? String(raw.roomNumber) : null,
+    cardName: raw.cardName != null ? String(raw.cardName) : null,
+    cardNumber: raw.cardNumber != null ? String(raw.cardNumber) : null,
     staffName: raw.staffName != null ? String(raw.staffName) : undefined,
+    tenders: mapTenders(raw.tenders),
   };
+}
+
+function mapTenders(raw: unknown): ReceiptTenderPreview[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  return raw.map((row) => {
+    const o = row as Record<string, unknown>;
+    return {
+      method: (o.method as PaymentMethod) ?? 'card',
+      amount: num(o.amount) ?? 0,
+      cashTendered: num(o.cashTendered ?? o.cash_tendered) ?? null,
+      change: num(o.change) ?? 0,
+      cardName: o.cardName != null ? String(o.cardName) : null,
+      cardNumber: o.cardNumber != null ? String(o.cardNumber) : null,
+      roomNumber: o.roomNumber != null ? String(o.roomNumber) : null,
+    };
+  });
 }
 
 export function mapProcessPaymentToPreview(res: ProcessPaymentResponse & { items?: unknown[] }): ReceiptPreviewData {

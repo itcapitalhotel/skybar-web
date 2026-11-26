@@ -12,6 +12,7 @@ import type {
   TableData, CreateTableRequest, TableLayoutUpdate, MergeTablesRequest, MergeTablesResponse,
   OrderType,
   TransferTableRequest, TransferTableResponse,
+  SplitTableRequest, SplitTableResponse,
   Booking, CreateBookingRequest, UpdateBookingRequest,
   StockItem, UpdateStockCountRequest, BulkStockUpdateRequest,
   StockHistoryEntry, StockReconcileRequest, StockReconcileResponse,
@@ -116,32 +117,34 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   }).then(async (res) => {
-
-  if (!res.ok) {
-    if (res.status === 401 && typeof window !== 'undefined') {
-      responseCache.clear();
-      clearAuthToken();
-      if (!window.location.pathname.startsWith('/login')) {
-        window.location.replace('/login');
+    if (!res.ok) {
+      if (res.status === 401 && typeof window !== 'undefined') {
+        responseCache.clear();
+        clearAuthToken();
+        if (!window.location.pathname.startsWith('/login')) {
+          window.location.replace('/login');
+        }
       }
-    }
 
-    let errorMessage = `API error ${res.status}: ${res.statusText}`;
-    try {
-      const errBody = await res.json();
-      errorMessage = errBody?.message ?? errorMessage;
-    } catch { /* ignore */ }
-    throw new Error(errorMessage);
-  }
+      let errorMessage = `API error ${res.status}: ${res.statusText} (${method} ${path})`;
+      try {
+        const errBody = await res.json() as { message?: string; error?: string };
+        const fromBody = errBody?.message ?? errBody?.error;
+        if (typeof fromBody === 'string' && fromBody.trim()) errorMessage = fromBody;
+      } catch { /* keep the status line */ }
+      return Promise.reject(new Error(errorMessage));
+    }
 
     if (res.status === 204) return undefined as unknown as T;
     return res.json() as Promise<T>;
   });
 
+  // Attach a handler on this promise itself. A failure that the caller already
+  // catches was still opening the Next.js error screen.
+  pending.catch(() => {});
+
   if (method === 'GET') {
     inflightGets.set(cacheKey, pending);
-    // `.finally()` returns its own promise. Leave it unhandled and a failed GET
-    // shows up as a runtime error even when the caller already caught it.
     pending.finally(() => {
       if (inflightGets.get(cacheKey) === pending) inflightGets.delete(cacheKey);
     }).catch(() => {});
@@ -285,6 +288,7 @@ export const tablesApi = {
     patch<TableData[]>('/tables/layout', { updates }),
   merge: (data: MergeTablesRequest) => post<MergeTablesResponse>('/tables/merge', data),
   transfer: (data: TransferTableRequest) => post<TransferTableResponse>('/tables/transfer', data),
+  split: (data: SplitTableRequest) => post<SplitTableResponse>('/tables/split', data),
 };
 
 function mapOrderLine(row: unknown): OrderItem {

@@ -15,18 +15,19 @@ export interface ReceiptPreviewProps {
   className?: string;
 }
 
-function methodLabel(method: PaymentMethod): string {
+function methodLabel(method: PaymentMethod, cardName?: string | null): string {
+  if (method === 'card' && cardName?.trim()) return `Credit Card  ${cardName.trim()}`;
   switch (method) {
     case 'cash':
       return 'Cash';
     case 'card':
-      return 'Card';
+      return 'Credit Card';
     case 'qr':
-      return 'QR';
+      return 'QR Code';
     case 'room':
-      return 'Room charge';
+      return 'Room Charge';
     default:
-      return String(method).toUpperCase();
+      return String(method);
   }
 }
 
@@ -71,12 +72,19 @@ export default function ReceiptPreview({
             ))}
           </header>
 
+          {!data.paymentId ? (
+            <p className="text-center font-bold tracking-wide text-[12px]">BILL CHECK</p>
+          ) : null}
+
           {(data.tableLabel || data.zoneLabel || data.paymentId || closed) && (
             <div className="text-[10px] text-gray-600 space-y-0.5 border-b border-dashed border-gray-300 pb-2">
               {data.tableLabel ? (
-                <p className="text-gray-800">
-                  Table: {data.tableLabel}
-                  {data.zoneLabel ? ` · ${data.zoneLabel}` : ''}
+                <p className="flex justify-between gap-2 text-gray-800">
+                  <span>Table</span>
+                  <span>
+                    {data.tableLabel}
+                    {data.zoneLabel ? `  ${data.zoneLabel}` : ''}
+                  </span>
                 </p>
               ) : null}
               {data.paymentId && data.paymentId !== 'preview-sample' ? (
@@ -100,15 +108,11 @@ export default function ReceiptPreview({
                     <div className="flex items-start justify-between gap-2">
                       <span className="text-gray-900 font-medium break-words min-w-0 flex-1">
                         {item.name}
-                        {item.khmerName?.trim() && item.khmerName.trim() !== item.name ? (
-                          <span className="block">{item.khmerName}</span>
-                        ) : null}
                       </span>
                       <span className="tabular-nums text-gray-900 shrink-0">{formatMoney(total, currencySymbol)}</span>
                     </div>
                     <p className="text-[10px] text-gray-500 pl-0.5">
                       {subParts.join(' · ')}
-                      {item.notes ? ` · ${item.notes}` : null}
                     </p>
                   </div>
                 );
@@ -160,7 +164,7 @@ export default function ReceiptPreview({
               </div>
             ) : null}
             <div className="flex justify-between gap-2 font-bold text-[12px] border-t border-dashed border-gray-400 pt-2 mt-1">
-              <span>TOTAL</span>
+              <span>{data.paymentId ? 'TOTAL' : 'AMOUNT DUE'}</span>
               <span className="tabular-nums">{formatMoney(data.total, currencySymbol)}</span>
             </div>
             {(data.tip ?? 0) > 0 ? (
@@ -171,36 +175,58 @@ export default function ReceiptPreview({
             ) : null}
           </section>
 
+          {data.paymentId ? (
           <section className="border-t border-dashed border-gray-400 pt-2 space-y-1 text-[10px] text-gray-700">
-            <div className="flex justify-between gap-2">
-              <span>Payment</span>
-              <span className="uppercase tabular-nums">{methodLabel(data.method)}</span>
-            </div>
-            {data.method === 'cash' && data.cashTendered != null ? (
-              <>
+            <p className="font-semibold text-gray-900 tracking-wide">
+              {data.tenders && data.tenders.length > 1
+                ? `PAYMENT  (${data.tenders.length} methods)`
+                : 'PAYMENT'}
+            </p>
+            {(data.tenders && data.tenders.length > 0
+              ? data.tenders
+              : [{
+                  method: data.method,
+                  amount: data.total,
+                  cashTendered: data.cashTendered,
+                  change,
+                  cardName: data.cardName,
+                  cardNumber: data.cardNumber,
+                  roomNumber: data.roomNumber,
+                }]
+            ).map((tender, idx) => (
+              <div key={`tender-${idx}`} className="space-y-0.5">
                 <div className="flex justify-between gap-2">
-                  <span>Tendered</span>
-                  <span className="tabular-nums">{formatMoney(data.cashTendered, currencySymbol)}</span>
+                  <span>{methodLabel(tender.method, tender.cardName)}</span>
+                  <span className="tabular-nums">{formatMoney(tender.amount, currencySymbol)}</span>
                 </div>
-                <div className="flex justify-between gap-2 font-semibold">
+                {tender.method === 'card' && tender.cardNumber ? (
+                  <p className="pl-2 text-gray-500">Auth  {tender.cardNumber}</p>
+                ) : null}
+                {tender.method === 'room' && tender.roomNumber ? (
+                  <p className="pl-2 text-gray-500">Room  {tender.roomNumber}</p>
+                ) : null}
+                {tender.method === 'cash' && tender.cashTendered != null && tender.cashTendered > tender.amount ? (
+                  <div className="flex justify-between gap-2 pl-2">
+                    <span>Tendered</span>
+                    <span className="tabular-nums">{formatMoney(tender.cashTendered, currencySymbol)}</span>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+            {change > 0 ? (
+              <>
+                <div className="flex justify-between gap-2 font-semibold pt-1">
                   <span>Change</span>
                   <span className="tabular-nums">{formatMoney(change, currencySymbol)}</span>
                 </div>
-                {change > 0 ? (
-                  <div className="flex justify-between gap-2 font-semibold">
-                    <span>អាប់</span>
-                    <span className="tabular-nums">{formatChangeRiel(change)}</span>
-                  </div>
-                ) : null}
+                <div className="flex justify-between gap-2 font-semibold">
+                  <span>Change KHR</span>
+                  <span className="tabular-nums">{formatChangeRiel(change)}</span>
+                </div>
               </>
             ) : null}
-            {data.method === 'room' && data.roomNumber ? (
-              <div className="flex justify-between gap-2">
-                <span>Room</span>
-                <span>{data.roomNumber}</span>
-              </div>
-            ) : null}
           </section>
+          ) : null}
 
           <footer className="text-center border-t border-dashed border-gray-400 pt-3 text-gray-600 text-[10px]">
             {footerLines.map((line, i) => (
